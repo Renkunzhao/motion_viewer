@@ -332,6 +332,7 @@ export class AppController {
       button.type = 'button';
       button.dataset.urdfPath = urdfPath;
       button.textContent = urdfPath;
+      button.title = urdfPath;
       button.classList.toggle('active', urdfPath === this.selectedUrdfPath);
       listItem.appendChild(button);
       this.urdfList.appendChild(listItem);
