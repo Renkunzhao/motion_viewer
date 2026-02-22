@@ -33,6 +33,7 @@ export class AppController {
   private titleOverride: string | null = null;
   private detailOverride: string | null = null;
   private warnings: string[] = [];
+  private sceneWarning: string | null = null;
   private lastLoadResult: LoadedRobotResult | null = null;
 
   private readonly onWindowResize = (): void => {
@@ -76,6 +77,14 @@ export class AppController {
     this.resetButton = requireElement<HTMLButtonElement>('reset-btn');
 
     this.sceneController = new SceneController(canvas);
+    this.sceneController.setModelUpAxis('+Z');
+    this.sceneController.onViewWarning = (warning) => {
+      this.sceneWarning = warning;
+      if (this.viewerState === 'ready' && this.lastLoadResult) {
+        this.renderReadyState(this.lastLoadResult);
+      }
+    };
+
     this.urdfLoadService = new UrdfLoadService();
     this.removeDropHandlers = registerDropHandlers(document, {
       onDrop: (dataTransfer) => this.handleDrop(dataTransfer),
@@ -99,6 +108,7 @@ export class AppController {
 
   resetViewer(): void {
     this.lastLoadResult = null;
+    this.sceneWarning = null;
     this.urdfLoadService.dispose();
     this.sceneController.clearRobot();
     this.setState('idle');
@@ -136,6 +146,7 @@ export class AppController {
     }
 
     this.lastLoadResult = null;
+    this.sceneWarning = null;
     this.sceneController.clearRobot();
     this.setState('loading');
 
@@ -143,11 +154,7 @@ export class AppController {
       const result = await this.urdfLoadService.loadFromDroppedFiles(fileMap);
       this.sceneController.setRobot(result.robot);
       this.lastLoadResult = result;
-      this.setState('ready', {
-        title: `Loaded ${result.robotName || 'URDF Robot'}`,
-        detail: `${result.jointCount} joints, ${result.linkCount} links, source: ${result.selectedUrdfPath}`,
-        warnings: result.warnings,
-      });
+      this.renderReadyState(result);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       this.setState('error', {
@@ -168,11 +175,7 @@ export class AppController {
     }
 
     if (this.lastLoadResult) {
-      this.setState('ready', {
-        title: `Loaded ${this.lastLoadResult.robotName || 'URDF Robot'}`,
-        detail: `${this.lastLoadResult.jointCount} joints, ${this.lastLoadResult.linkCount} links, source: ${this.lastLoadResult.selectedUrdfPath}`,
-        warnings: this.lastLoadResult.warnings,
-      });
+      this.renderReadyState(this.lastLoadResult);
       return;
     }
 
@@ -208,5 +211,21 @@ export class AppController {
       item.textContent = warning;
       this.statusWarnings.appendChild(item);
     }
+  }
+
+  private renderReadyState(result: LoadedRobotResult): void {
+    this.setState('ready', {
+      title: `Loaded ${result.robotName || 'URDF Robot'}`,
+      detail: `${result.jointCount} joints, ${result.linkCount} links, source: ${result.selectedUrdfPath}. Drop to replace.`,
+      warnings: this.mergeWarnings(result.warnings, this.sceneWarning),
+    });
+  }
+
+  private mergeWarnings(primary: string[], secondary: string | null): string[] {
+    const merged = new Set(primary);
+    if (secondary) {
+      merged.add(secondary);
+    }
+    return [...merged];
   }
 }
