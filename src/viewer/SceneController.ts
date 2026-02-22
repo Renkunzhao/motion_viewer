@@ -1,4 +1,5 @@
 import {
+  ACESFilmicToneMapping,
   Box3,
   Color,
   DirectionalLight,
@@ -6,10 +7,15 @@ import {
   GridHelper,
   HemisphereLight,
   Mesh,
-  Object3D,
+  MeshPhongMaterial,
+  PCFSoftShadowMap,
   PerspectiveCamera,
+  PlaneGeometry,
+  PMREMGenerator,
   SRGBColorSpace,
   Scene,
+  ShadowMaterial,
+  Sphere,
   Vector2,
   Vector3,
   WebGLRenderer,
@@ -20,9 +26,37 @@ import type { UrdfRobotLike } from '../types/viewer';
 
 const HALF_PI = Math.PI / 2;
 const GRID_BASE_SIZE = 20;
+const DEFAULT_FIT_OFFSET = 1.8;
+const KEY_LIGHT_OFFSET = new Vector3(4, 10, 1);
+const DARK_COLOR_EPSILON = 0.06;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function isWithinUrdfCollider(node: any): boolean {
+  let current = node;
+  while (current) {
+    if (current.isURDFCollider) {
+      return true;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+function getSafeMaterialColor(candidate: any): any {
+  const fallbackColor = new Color('#d7e0e8');
+  const sourceColor = candidate?.color?.clone?.() ?? fallbackColor.clone();
+  const luminance =
+    sourceColor.r * 0.2126 + sourceColor.g * 0.7152 + sourceColor.b * 0.0722;
+
+  // Some imported MeshBasic materials come in as near-black; keep a readable default.
+  if (luminance < DARK_COLOR_EPSILON) {
+    return fallbackColor;
+  }
+
+  return sourceColor;
 }
 
 function disposeMaterial(material: unknown): void {
@@ -58,7 +92,7 @@ export function getModelRootRotationX(up: '+Z' | '+Y'): number {
 export function computeCameraDistance(
   maxDimension: number,
   fovDegrees: number,
-  fitOffset = 1.8,
+  fitOffset = DEFAULT_FIT_OFFSET,
 ): number {
   const safeDimension = Math.max(maxDimension, 0.01);
   const safeFov = clamp(fovDegrees, 10, 120);
@@ -102,7 +136,12 @@ export class SceneController {
   private readonly controls: any;
   private readonly canvas: HTMLCanvasElement;
   private readonly modelRoot: any;
+  private readonly keyLight: any;
+  private readonly keyLightOffset: any;
+  private readonly groundPlane: any;
   private readonly referenceGrid: any;
+  private readonly pmremGenerator: any;
+  private readonly environmentMapTarget: any;
   private currentRobot: UrdfRobotLike | null = null;
   private visualNodes: any[] = [];
   private collisionNodes: any[] = [];
@@ -117,42 +156,96 @@ export class SceneController {
     this.scene = new Scene();
     this.scene.background = new Color('#07121a');
 
-    this.camera = new PerspectiveCamera(55, 1, 0.05, 500);
-    this.camera.position.set(2.4, 2.1, 2.8);
+    this.camera = new PerspectiveCamera(75, 1, 0.05, 500);
+    this.camera.position.set(2, 2, 2);
 
     this.renderer = new WebGLRenderer({
       canvas: this.canvas,
       antialias: true,
       alpha: false,
     });
+    const width = Math.max(this.canvas.clientWidth, 1);
+    const height = Math.max(this.canvas.clientHeight, 1);
     this.renderer.setPixelRatio(window.devicePixelRatio);
-    this.renderer.setSize(this.canvas.clientWidth, this.canvas.clientHeight, false);
+    this.renderer.setSize(width, height, false);
     this.renderer.outputColorSpace = SRGBColorSpace;
+    this.renderer.toneMapping = ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.0;
     this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = PCFSoftShadowMap;
+
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.08;
+    this.controls.dampingFactor = 0.06;
     this.controls.rotateSpeed = 0.9;
     this.controls.zoomSpeed = 1.0;
-    this.controls.target.set(0, 1.0, 0);
+    this.controls.target.set(0, 0, 0);
 
-    const hemisphere = new HemisphereLight('#b9dcff', '#0f1114', 1.6);
+    this.pmremGenerator = new PMREMGenerator(this.renderer);
+    this.pmremGenerator.compileEquirectangularShader();
+    const envScene = new Scene();
+    envScene.add(new HemisphereLight('#ffffff', '#45505f', 1.0));
+    const envKeyLight = new DirectionalLight('#ffffff', 0.8);
+    envKeyLight.position.set(3, 5, 2);
+    envScene.add(envKeyLight);
+    this.environmentMapTarget = this.pmremGenerator.fromScene(envScene, 0.05);
+    this.scene.environment = this.environmentMapTarget.texture;
+
+    const hemisphere = new HemisphereLight('#ffffff', '#21313d', 0.55);
+    hemisphere.position.set(0, 1, 0);
     this.scene.add(hemisphere);
 
-    const directional = new DirectionalLight('#f6fbff', 2.2);
-    directional.position.set(4, 8, 3.5);
-    directional.castShadow = true;
-    directional.shadow.mapSize.set(2048, 2048);
-    directional.shadow.normalBias = 0.0015;
-    this.scene.add(directional);
+    this.keyLightOffset = KEY_LIGHT_OFFSET.clone();
+    this.keyLight = new DirectionalLight('#ffffff', Math.PI);
+    this.keyLight.position.copy(this.keyLightOffset);
+    this.keyLight.castShadow = true;
+    this.keyLight.shadow.mapSize.set(2048, 2048);
+    this.keyLight.shadow.camera.near = 0.1;
+    this.keyLight.shadow.camera.far = 80;
+    this.keyLight.shadow.normalBias = 0.001;
+    this.scene.add(this.keyLight);
+    this.scene.add(this.keyLight.target);
+
+    const fillLight = new DirectionalLight('#d2e8ff', Math.PI * 0.34);
+    fillLight.position.set(-2.2, 3.1, -2.4);
+    this.scene.add(fillLight);
+
+    const rimLight = new DirectionalLight('#9ec9ff', Math.PI * 0.14);
+    rimLight.position.set(0, 4, -5);
+    this.scene.add(rimLight);
 
     this.modelRoot = new Group();
     this.modelRoot.name = 'model-root';
     this.scene.add(this.modelRoot);
 
+    this.groundPlane = new Mesh(
+      new PlaneGeometry(GRID_BASE_SIZE, GRID_BASE_SIZE),
+      new ShadowMaterial({
+        transparent: true,
+        opacity: 0.24,
+      }),
+    );
+    this.groundPlane.rotation.x = -HALF_PI;
+    this.groundPlane.receiveShadow = true;
+    this.groundPlane.castShadow = false;
+    this.groundPlane.position.y = 0;
+    this.groundPlane.visible = true;
+    this.scene.add(this.groundPlane);
+
     this.referenceGrid = new GridHelper(GRID_BASE_SIZE, 20, '#3a5666', '#1a303a');
     this.referenceGrid.position.y = 0;
+    const gridMaterials = Array.isArray(this.referenceGrid.material)
+      ? this.referenceGrid.material
+      : [this.referenceGrid.material];
+    for (const material of gridMaterials) {
+      material.opacity = 0.72;
+      material.transparent = true;
+      material.depthWrite = false;
+    }
+    this.referenceGrid.renderOrder = 1;
     this.scene.add(this.referenceGrid);
 
     this.setModelUpAxis('+Z');
@@ -171,9 +264,11 @@ export class SceneController {
     this.clearRobot();
     this.currentRobot = robot;
     this.modelRoot.add(robot);
+
     this.applyMeshDefaults(robot);
     this.collectGeometryNodes(robot);
     this.setGeometryVisibility(this.showVisual, this.showCollision);
+
     const box = this.frameRobot(robot);
     if (box) {
       this.updateGroundAndGrid(box);
@@ -191,6 +286,13 @@ export class SceneController {
     for (const node of this.collisionNodes) {
       node.visible = showCollision;
     }
+
+    if (this.currentRobot) {
+      const box = this.computeRobotBounds(this.currentRobot);
+      if (box) {
+        this.updateGroundAndGrid(box);
+      }
+    }
   }
 
   clearRobot(): void {
@@ -203,6 +305,10 @@ export class SceneController {
     this.currentRobot = null;
     this.visualNodes = [];
     this.collisionNodes = [];
+    this.referenceGrid.scale.setScalar(1);
+    this.referenceGrid.position.y = 0;
+    this.groundPlane.scale.setScalar(1);
+    this.groundPlane.position.y = 0;
     this.emitWarning(null);
   }
 
@@ -211,16 +317,15 @@ export class SceneController {
       return null;
     }
 
-    this.modelRoot.updateMatrixWorld(true);
-    const box = new Box3().setFromObject(this.modelRoot, true);
-    if (box.isEmpty()) {
+    const box = this.computeRobotBounds(robot);
+    if (!box) {
       return null;
     }
 
     const center = box.getCenter(new Vector3());
     const size = box.getSize(new Vector3());
     const maxDimension = Math.max(size.x, size.y, size.z, 0.01);
-    const distance = computeCameraDistance(maxDimension, this.camera.fov);
+    const distance = computeCameraDistance(maxDimension, this.camera.fov, DEFAULT_FIT_OFFSET);
     const horizontalAngle = (Math.PI * 3) / 4;
     const verticalAngle = Math.PI / 6;
     const cameraOffset = new Vector3(
@@ -235,6 +340,7 @@ export class SceneController {
     this.camera.far = Math.max(200, distance * 55);
     this.camera.updateProjectionMatrix();
     this.controls.update();
+    this.updateKeyLightForBounds(box, center);
     this.emitWarning(evaluateScaleWarning(maxDimension));
     return box;
   }
@@ -249,21 +355,25 @@ export class SceneController {
     const gridScale = computeGridScale(maxDimension);
     this.referenceGrid.scale.setScalar(gridScale);
     this.referenceGrid.position.y = box.min.y + 0.0005;
+
+    this.groundPlane.scale.setScalar(gridScale);
+    this.groundPlane.position.y = box.min.y + 0.0001;
   }
 
   resize(): void {
     const size = new Vector2();
     this.renderer.getSize(size);
-    const width = this.canvas.clientWidth;
-    const height = this.canvas.clientHeight;
+    const width = Math.max(this.canvas.clientWidth, 1);
+    const height = Math.max(this.canvas.clientHeight, 1);
+    const aspect = width / height;
 
-    if (size.x === width && size.y === height) {
+    if (size.x === width && size.y === height && Math.abs(this.camera.aspect - aspect) < 1e-6) {
       return;
     }
 
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setSize(width, height, false);
-    this.camera.aspect = width / Math.max(height, 1);
+    this.camera.aspect = aspect;
     this.camera.updateProjectionMatrix();
   }
 
@@ -271,6 +381,20 @@ export class SceneController {
     cancelAnimationFrame(this.animationFrameId);
     this.controls.dispose();
     this.clearRobot();
+
+    this.referenceGrid.geometry?.dispose?.();
+    if (Array.isArray(this.referenceGrid.material)) {
+      this.referenceGrid.material.forEach((material: unknown) => disposeMaterial(material));
+    } else {
+      disposeMaterial(this.referenceGrid.material);
+    }
+
+    this.groundPlane.geometry?.dispose?.();
+    disposeMaterial(this.groundPlane.material);
+
+    this.environmentMapTarget?.dispose?.();
+    this.pmremGenerator?.dispose?.();
+
     this.renderer.dispose();
   }
 
@@ -281,19 +405,36 @@ export class SceneController {
         return;
       }
 
+      const isColliderMesh = isWithinUrdfCollider(maybeMesh);
+      if (isColliderMesh) {
+        this.applyCollisionMaterial(maybeMesh);
+        return;
+      }
+
       maybeMesh.castShadow = true;
       maybeMesh.receiveShadow = true;
+
+      if (Array.isArray(maybeMesh.material)) {
+        maybeMesh.material = maybeMesh.material.map((material: unknown) =>
+          this.enhanceMaterial(material),
+        );
+      } else {
+        maybeMesh.material = this.enhanceMaterial(maybeMesh.material);
+      }
     });
   }
 
   private collectGeometryNodes(robot: UrdfRobotLike): void {
     const visualNodes = new Set<any>();
     const collisionNodes = new Set<any>();
+    const visualMeshes = new Set<any>();
+    const collisionMeshes = new Set<any>();
 
     robot.traverse((child: unknown) => {
       const node = child as any & {
         isURDFVisual?: boolean;
         isURDFCollider?: boolean;
+        isMesh?: boolean;
       };
 
       if (node.isURDFCollider) {
@@ -301,10 +442,18 @@ export class SceneController {
       } else if (node.isURDFVisual) {
         visualNodes.add(node);
       }
+
+      if (node.isMesh) {
+        if (isWithinUrdfCollider(node)) {
+          collisionMeshes.add(node);
+        } else {
+          visualMeshes.add(node);
+        }
+      }
     });
 
-    this.visualNodes = [...visualNodes];
-    this.collisionNodes = [...collisionNodes];
+    this.visualNodes = visualNodes.size > 0 ? [...visualNodes] : [...visualMeshes];
+    this.collisionNodes = collisionNodes.size > 0 ? [...collisionNodes] : [...collisionMeshes];
   }
 
   private animate(): void {
@@ -312,6 +461,144 @@ export class SceneController {
     this.controls.update();
     this.resize();
     this.renderer.render(this.scene, this.camera);
+  }
+
+  private enhanceMaterial(material: unknown): unknown {
+    const candidate = material as any;
+    if (!candidate || typeof candidate !== 'object') {
+      return material;
+    }
+
+    if (candidate.map) {
+      candidate.map.colorSpace = SRGBColorSpace;
+    }
+
+    if (candidate.isMeshBasicMaterial || candidate.isMeshLambertMaterial) {
+      return new MeshPhongMaterial({
+        color: getSafeMaterialColor(candidate),
+        map: candidate.map ?? null,
+        transparent: Boolean(candidate.transparent),
+        opacity: candidate.opacity ?? 1,
+        side: candidate.side,
+        flatShading: Boolean(candidate.flatShading),
+        wireframe: Boolean(candidate.wireframe),
+        vertexColors: Boolean(candidate.vertexColors),
+        shininess: 48,
+        specular: new Color(0.3, 0.3, 0.3),
+        emissive: new Color(0.03, 0.03, 0.03),
+        envMap: this.scene.environment ?? null,
+        reflectivity: this.scene.environment ? 0.26 : 0,
+      });
+    }
+
+    if (candidate.isMeshPhongMaterial) {
+      if (candidate.shininess === undefined || candidate.shininess < 42) {
+        candidate.shininess = 42;
+      }
+      if (!candidate.specular) {
+        candidate.specular = new Color(0.24, 0.24, 0.24);
+      }
+      if (!candidate.emissive) {
+        candidate.emissive = new Color(0.02, 0.02, 0.02);
+      }
+      if (this.scene.environment && !candidate.envMap) {
+        candidate.envMap = this.scene.environment;
+        candidate.reflectivity = candidate.reflectivity ?? 0.2;
+      }
+      candidate.needsUpdate = true;
+      return candidate;
+    }
+
+    if (candidate.isMeshStandardMaterial) {
+      // Keep original PBR values to avoid unexpected darkening on imported assets.
+      if (this.scene.environment && !candidate.envMap) {
+        candidate.envMap = this.scene.environment;
+        candidate.envMapIntensity = candidate.envMapIntensity ?? 0.85;
+      }
+      candidate.needsUpdate = true;
+      return candidate;
+    }
+
+    return candidate;
+  }
+
+  private applyCollisionMaterial(mesh: any): void {
+    if (!mesh.userData.__collisionMaterialApplied) {
+      mesh.material = new MeshPhongMaterial({
+        transparent: true,
+        opacity: 0.35,
+        shininess: 2.5,
+        premultipliedAlpha: true,
+        color: 0xffbe38,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
+      });
+      mesh.userData.__collisionMaterialApplied = true;
+    }
+
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+  }
+
+  private getFramingTargets(robot: UrdfRobotLike): any[] {
+    const targets: any[] = [];
+
+    if (this.showVisual) {
+      targets.push(...this.visualNodes);
+    }
+    if (this.showCollision) {
+      targets.push(...this.collisionNodes);
+    }
+
+    if (targets.length > 0) {
+      return targets;
+    }
+    if (this.visualNodes.length > 0) {
+      return [...this.visualNodes];
+    }
+    if (this.collisionNodes.length > 0) {
+      return [...this.collisionNodes];
+    }
+
+    return [robot];
+  }
+
+  private computeRobotBounds(robot: UrdfRobotLike): any | null {
+    this.modelRoot.updateMatrixWorld(true);
+
+    const targets = this.getFramingTargets(robot);
+    const box = new Box3();
+    for (const target of targets) {
+      box.expandByObject(target, true);
+    }
+
+    if (box.isEmpty()) {
+      box.setFromObject(this.modelRoot, true);
+    }
+
+    if (box.isEmpty()) {
+      return null;
+    }
+
+    return box;
+  }
+
+  private updateKeyLightForBounds(box: any, center: any): void {
+    const sphere = box.getBoundingSphere(new Sphere());
+    const radius = Math.max(sphere.radius, 1);
+
+    const shadowCamera = this.keyLight.shadow.camera;
+    shadowCamera.left = -radius;
+    shadowCamera.right = radius;
+    shadowCamera.top = radius;
+    shadowCamera.bottom = -radius;
+    shadowCamera.far = Math.max(40, radius * 8);
+
+    this.keyLight.target.position.copy(center);
+    this.keyLight.position.copy(center).add(this.keyLightOffset);
+    this.keyLight.target.updateMatrixWorld();
+    shadowCamera.updateProjectionMatrix();
   }
 
   private emitWarning(warning: string | null): void {
