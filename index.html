@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <title>Motion Viewer</title>
+  </head>
+  <body>
+    <div id="app" data-viewer-state="idle">
+      <canvas id="viewer-canvas" aria-label="3D robot viewer"></canvas>
+
+      <div id="drop-overlay" class="drop-overlay">
+        <div class="drop-overlay__panel">
+          <p class="drop-overlay__eyebrow">Motion Viewer</p>
+          <h1>URDF Drag Loader</h1>
+          <p id="drop-hint" class="drop-overlay__hint">
+            Drag a robot folder or multi-file set. Chromium browsers have full
+            folder support.
+          </p>
+          <div class="drop-overlay__actions">
+            <button id="pick-folder-btn" type="button">Select Folder</button>
+            <button id="pick-files-btn" type="button">Select Files</button>
+            <button id="reset-btn" type="button" class="ghost">Reset</button>
+          </div>
+        </div>
+      </div>
+
+      <aside id="status-panel" class="status-panel" aria-live="polite">
+        <div class="status-panel__top">
+          <span id="state-chip" class="state-chip">Idle</span>
+          <strong id="status-title">Waiting For Input</strong>
+        </div>
+        <p id="status-detail" class="status-panel__detail">
+          Drop a URDF file set to start.
+        </p>
+        <ul id="status-warnings" class="status-panel__warnings"></ul>
+      </aside>
+    </div>
+
+    <input id="folder-input" type="file" webkitdirectory directory multiple hidden />
+    <input
+      id="file-input"
+      type="file"
+      multiple
+      hidden
+      accept=".urdf,.stl,.obj,.dae,.xml,.png,.jpg,.jpeg,.bmp,.gif,.tga,.webp"
+    />
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
