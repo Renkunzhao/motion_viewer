@@ -23,6 +23,10 @@ export class AppController {
   private readonly statusTitle: HTMLElement;
   private readonly statusDetail: HTMLParagraphElement;
   private readonly statusWarnings: HTMLUListElement;
+  private readonly urdfListSection: HTMLElement;
+  private readonly urdfList: HTMLUListElement;
+  private readonly showVisualButton: HTMLButtonElement;
+  private readonly showCollisionButton: HTMLButtonElement;
   private readonly folderInput: HTMLInputElement;
   private readonly fileInput: HTMLInputElement;
   private readonly pickFolderButton: HTMLButtonElement;
@@ -34,6 +38,11 @@ export class AppController {
   private detailOverride: string | null = null;
   private warnings: string[] = [];
   private sceneWarning: string | null = null;
+  private droppedFileMap: DroppedFileMap | null = null;
+  private availableUrdfPaths: string[] = [];
+  private selectedUrdfPath: string | null = null;
+  private showVisual = true;
+  private showCollision = false;
   private lastLoadResult: LoadedRobotResult | null = null;
 
   private readonly onWindowResize = (): void => {
@@ -62,6 +71,33 @@ export class AppController {
     this.resetViewer();
   };
 
+  private readonly onShowVisualClick = (): void => {
+    this.showVisual = !this.showVisual;
+    this.sceneController.setGeometryVisibility(this.showVisual, this.showCollision);
+    this.syncVisibilityButtons();
+  };
+
+  private readonly onShowCollisionClick = (): void => {
+    this.showCollision = !this.showCollision;
+    this.sceneController.setGeometryVisibility(this.showVisual, this.showCollision);
+    this.syncVisibilityButtons();
+  };
+
+  private readonly onUrdfListClick = (event: Event): void => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>('button[data-urdf-path]');
+    if (!button) {
+      return;
+    }
+
+    const urdfPath = button.dataset.urdfPath;
+    if (!urdfPath || urdfPath === this.selectedUrdfPath) {
+      return;
+    }
+
+    void this.loadSelectedUrdf(urdfPath);
+  };
+
   constructor() {
     this.appRoot = requireElement<HTMLDivElement>('app');
     const canvas = requireElement<HTMLCanvasElement>('viewer-canvas');
@@ -70,6 +106,10 @@ export class AppController {
     this.statusTitle = requireElement<HTMLElement>('status-title');
     this.statusDetail = requireElement<HTMLParagraphElement>('status-detail');
     this.statusWarnings = requireElement<HTMLUListElement>('status-warnings');
+    this.urdfListSection = requireElement<HTMLElement>('urdf-list-section');
+    this.urdfList = requireElement<HTMLUListElement>('urdf-list');
+    this.showVisualButton = requireElement<HTMLButtonElement>('show-visual-btn');
+    this.showCollisionButton = requireElement<HTMLButtonElement>('show-collision-btn');
     this.folderInput = requireElement<HTMLInputElement>('folder-input');
     this.fileInput = requireElement<HTMLInputElement>('file-input');
     this.pickFolderButton = requireElement<HTMLButtonElement>('pick-folder-btn');
@@ -97,7 +137,11 @@ export class AppController {
     this.pickFolderButton.addEventListener('click', this.onPickFolderClick);
     this.pickFilesButton.addEventListener('click', this.onPickFilesClick);
     this.resetButton.addEventListener('click', this.onResetClick);
+    this.showVisualButton.addEventListener('click', this.onShowVisualClick);
+    this.showCollisionButton.addEventListener('click', this.onShowCollisionClick);
+    this.urdfList.addEventListener('click', this.onUrdfListClick);
 
+    this.syncVisibilityButtons();
     this.renderState();
   }
 
@@ -107,10 +151,14 @@ export class AppController {
   }
 
   resetViewer(): void {
+    this.droppedFileMap = null;
+    this.availableUrdfPaths = [];
+    this.selectedUrdfPath = null;
     this.lastLoadResult = null;
     this.sceneWarning = null;
     this.urdfLoadService.dispose();
     this.sceneController.clearRobot();
+    this.renderUrdfList();
     this.setState('idle');
   }
 
@@ -122,6 +170,9 @@ export class AppController {
     this.pickFolderButton.removeEventListener('click', this.onPickFolderClick);
     this.pickFilesButton.removeEventListener('click', this.onPickFilesClick);
     this.resetButton.removeEventListener('click', this.onResetClick);
+    this.showVisualButton.removeEventListener('click', this.onShowVisualClick);
+    this.showCollisionButton.removeEventListener('click', this.onShowCollisionClick);
+    this.urdfList.removeEventListener('click', this.onUrdfListClick);
 
     this.urdfLoadService.dispose();
     this.sceneController.dispose();
@@ -138,6 +189,10 @@ export class AppController {
 
   private async handleDroppedFileMap(fileMap: DroppedFileMap): Promise<void> {
     if (fileMap.size === 0) {
+      this.droppedFileMap = null;
+      this.availableUrdfPaths = [];
+      this.selectedUrdfPath = null;
+      this.renderUrdfList();
       this.setState('error', {
         title: 'No Files Found',
         detail: 'Drop payload did not contain files. Try selecting a folder or file set again.',
@@ -145,15 +200,43 @@ export class AppController {
       return;
     }
 
+    this.droppedFileMap = fileMap;
+    this.availableUrdfPaths = this.urdfLoadService.getAvailableUrdfPaths(fileMap);
+    this.selectedUrdfPath = this.availableUrdfPaths[0] ?? null;
+    this.renderUrdfList();
+
+    if (!this.selectedUrdfPath) {
+      this.setState('error', {
+        title: 'No URDF Found',
+        detail: 'Dropped files do not contain .urdf models.',
+      });
+      return;
+    }
+
+    await this.loadSelectedUrdf(this.selectedUrdfPath);
+  }
+
+  private async loadSelectedUrdf(urdfPath: string): Promise<void> {
+    if (!this.droppedFileMap) {
+      return;
+    }
+
     this.lastLoadResult = null;
     this.sceneWarning = null;
+    this.selectedUrdfPath = urdfPath;
+    this.renderUrdfList();
     this.sceneController.clearRobot();
-    this.setState('loading');
+    this.setState('loading', {
+      detail: `Loading ${urdfPath} ...`,
+    });
 
     try {
-      const result = await this.urdfLoadService.loadFromDroppedFiles(fileMap);
+      const result = await this.urdfLoadService.loadFromDroppedFiles(this.droppedFileMap, urdfPath);
       this.sceneController.setRobot(result.robot);
+      this.sceneController.setGeometryVisibility(this.showVisual, this.showCollision);
       this.lastLoadResult = result;
+      this.selectedUrdfPath = result.selectedUrdfPath;
+      this.renderUrdfList();
       this.renderReadyState(result);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -227,5 +310,31 @@ export class AppController {
       merged.add(secondary);
     }
     return [...merged];
+  }
+
+  private syncVisibilityButtons(): void {
+    this.showVisualButton.classList.toggle('active', this.showVisual);
+    this.showCollisionButton.classList.toggle('active', this.showCollision);
+  }
+
+  private renderUrdfList(): void {
+    const showList = this.availableUrdfPaths.length > 1;
+    this.urdfListSection.hidden = !showList;
+    this.urdfList.innerHTML = '';
+
+    if (!showList) {
+      return;
+    }
+
+    for (const urdfPath of this.availableUrdfPaths) {
+      const listItem = document.createElement('li');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.urdfPath = urdfPath;
+      button.textContent = urdfPath;
+      button.classList.toggle('active', urdfPath === this.selectedUrdfPath);
+      listItem.appendChild(button);
+      this.urdfList.appendChild(listItem);
+    }
   }
 }

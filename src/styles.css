@@ -137,6 +137,36 @@ body {
   gap: 0.62rem;
 }
 
+.status-panel__controls {
+  margin-top: 0.62rem;
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.toggle-chip {
+  appearance: none;
+  border: 1px solid rgba(146, 205, 236, 0.35);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.3rem 0.65rem;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.toggle-chip.active {
+  color: #03291f;
+  background: var(--accent-strong);
+  border-color: rgba(131, 223, 193, 0.8);
+}
+
+.toggle-chip:hover {
+  border-color: rgba(131, 223, 193, 0.8);
+}
+
 .state-chip {
   border-radius: 999px;
   padding: 0.22rem 0.52rem;
@@ -152,6 +182,56 @@ body {
   color: var(--text-muted);
   line-height: 1.4;
   font-size: 0.95rem;
+}
+
+.urdf-list-section {
+  margin-top: 0.7rem;
+}
+
+.urdf-list-section__title {
+  margin: 0;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.urdf-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+  max-height: 132px;
+  overflow: auto;
+}
+
+.urdf-list li {
+  margin: 0;
+}
+
+.urdf-list button {
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  border: 1px solid rgba(146, 205, 236, 0.2);
+  border-radius: 10px;
+  background: rgba(5, 19, 28, 0.56);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.48rem 0.56rem;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.urdf-list button:hover {
+  border-color: rgba(131, 223, 193, 0.62);
+}
+
+.urdf-list button.active {
+  border-color: rgba(131, 223, 193, 0.95);
+  background: rgba(83, 191, 157, 0.24);
 }
 
 .status-panel__warnings {

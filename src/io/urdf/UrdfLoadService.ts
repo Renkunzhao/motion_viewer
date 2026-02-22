@@ -1,4 +1,3 @@
-import type { LoadingManager } from 'three';
 import { Group, Mesh, MeshPhongMaterial } from 'three';
 import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
@@ -22,13 +21,31 @@ export class UrdfLoadService {
     this.revokeObjectUrls();
   }
 
-  async loadFromDroppedFiles(fileMap: DroppedFileMap): Promise<LoadedRobotResult> {
-    this.revokeObjectUrls();
-
-    const urdfPaths = sortUrdfPaths(
+  getAvailableUrdfPaths(fileMap: DroppedFileMap): string[] {
+    return sortUrdfPaths(
       [...fileMap.keys()].filter((path) => path.toLowerCase().endsWith('.urdf')),
     );
-    const selectedUrdfPath = selectPrimaryUrdfPath(urdfPaths);
+  }
+
+  async loadFromDroppedFiles(
+    fileMap: DroppedFileMap,
+    preferredUrdfPath?: string,
+  ): Promise<LoadedRobotResult> {
+    this.revokeObjectUrls();
+
+    const urdfPaths = this.getAvailableUrdfPaths(fileMap);
+    let selectedUrdfPath: string | null;
+
+    if (preferredUrdfPath) {
+      const normalizedPreferredPath = normalizePath(preferredUrdfPath);
+      selectedUrdfPath =
+        urdfPaths.find((path) => path === normalizedPreferredPath) ?? null;
+      if (!selectedUrdfPath) {
+        throw new Error(`Requested URDF not found in dropped files: ${preferredUrdfPath}`);
+      }
+    } else {
+      selectedUrdfPath = selectPrimaryUrdfPath(urdfPaths);
+    }
 
     if (!selectedUrdfPath) {
       throw new Error('No URDF file found. Drop a URDF file or folder containing one.');
@@ -40,7 +57,7 @@ export class UrdfLoadService {
     }
 
     const warnings = new Set<string>();
-    if (urdfPaths.length > 1) {
+    if (!preferredUrdfPath && urdfPaths.length > 1) {
       warnings.add(
         `Multiple URDF files found. Auto-selected ${selectedUrdfPath}. Drop a narrower folder to choose another.`,
       );
@@ -93,7 +110,11 @@ export class UrdfLoadService {
       return resolveBlobUrl(fileKey);
     });
 
-    loader.loadMeshCb = (requestedPath: string, manager: LoadingManager, done) => {
+    loader.loadMeshCb = (
+      requestedPath: string,
+      manager: any,
+      done: (object: unknown, error?: unknown) => void,
+    ) => {
       const fileKey = resolveFileKeyForRequest(requestedPath, selectedUrdfPath, fileMap);
       if (!fileKey) {
         reportMissingResource(requestedPath);
@@ -114,7 +135,7 @@ export class UrdfLoadService {
         case 'stl':
           new STLLoader(manager).load(
             blobUrl,
-            (geometry) => {
+            (geometry: unknown) => {
               const material = new MeshPhongMaterial({ color: '#c2ccd5' });
               const mesh = new Mesh(geometry, material);
               done(mesh);
@@ -126,7 +147,7 @@ export class UrdfLoadService {
         case 'obj':
           new OBJLoader(manager).load(
             blobUrl,
-            (object) => done(object),
+            (object: unknown) => done(object),
             undefined,
             onError,
           );
@@ -134,7 +155,7 @@ export class UrdfLoadService {
         case 'dae':
           new ColladaLoader(manager).load(
             blobUrl,
-            (result) => done(result.scene ?? new Group()),
+            (result: any) => done(result?.scene ?? new Group()),
             undefined,
             onError,
           );
@@ -174,14 +195,14 @@ export class UrdfLoadService {
     this.objectUrls.clear();
   }
 
-  private loadUrdfWithUrl(loader: URDFLoader, urdfUrl: string): Promise<UrdfRobotLike> {
+  private loadUrdfWithUrl(loader: any, urdfUrl: string): Promise<UrdfRobotLike> {
     return new Promise((resolve, reject) => {
       loader.load(
         urdfUrl,
-        (robot) => {
+        (robot: unknown) => {
           const loadedRobot = robot as UrdfRobotLike;
-          loadedRobot.traverse((child) => {
-            const maybeMesh = child as Mesh;
+          loadedRobot.traverse((child: unknown) => {
+            const maybeMesh = child as any;
             if (maybeMesh.isMesh) {
               maybeMesh.castShadow = true;
               maybeMesh.receiveShadow = true;
@@ -190,7 +211,7 @@ export class UrdfLoadService {
           resolve(loadedRobot);
         },
         undefined,
-        (error) => {
+        (error: unknown) => {
           const reason = error instanceof Error ? error.message : String(error);
           reject(new Error(`URDF loading failed: ${reason}`));
         },

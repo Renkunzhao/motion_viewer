@@ -9,7 +9,7 @@ import {
 describe('SceneController math helpers', () => {
   it('computes deterministic camera distance from model size and fov', () => {
     const distance = computeCameraDistance(2.0, 55);
-    expect(distance).toBeCloseTo(2.59, 2);
+    expect(distance).toBeCloseTo(3.46, 2);
 
     const largerModelDistance = computeCameraDistance(6.0, 55);
     expect(largerModelDistance).toBeGreaterThan(distance);

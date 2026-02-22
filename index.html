@@ -36,9 +36,21 @@
           <span id="state-chip" class="state-chip">Idle</span>
           <strong id="status-title">Waiting For Input</strong>
         </div>
+        <div class="status-panel__controls">
+          <button id="show-visual-btn" type="button" class="toggle-chip active">
+            Visual
+          </button>
+          <button id="show-collision-btn" type="button" class="toggle-chip">
+            Collision
+          </button>
+        </div>
         <p id="status-detail" class="status-panel__detail">
           Drop a URDF file set to start.
         </p>
+        <section id="urdf-list-section" class="urdf-list-section" hidden>
+          <p class="urdf-list-section__title">URDF Files</p>
+          <ul id="urdf-list" class="urdf-list"></ul>
+        </section>
         <ul id="status-warnings" class="status-panel__warnings"></ul>
       </aside>
     </div>

@@ -6,6 +6,7 @@ import {
   GridHelper,
   HemisphereLight,
   Mesh,
+  Object3D,
   PerspectiveCamera,
   SRGBColorSpace,
   Scene,
@@ -34,8 +35,8 @@ function disposeMaterial(material: unknown): void {
 }
 
 function disposeObjectTree(object: UrdfRobotLike): void {
-  object.traverse((child) => {
-    const maybeMesh = child as Mesh & {
+  object.traverse((child: unknown) => {
+    const maybeMesh = child as any & {
       geometry?: { dispose?: () => void };
       material?: unknown | unknown[];
     };
@@ -43,7 +44,7 @@ function disposeObjectTree(object: UrdfRobotLike): void {
     maybeMesh.geometry?.dispose?.();
 
     if (Array.isArray(maybeMesh.material)) {
-      maybeMesh.material.forEach((material) => disposeMaterial(material));
+      maybeMesh.material.forEach((material: unknown) => disposeMaterial(material));
     } else {
       disposeMaterial(maybeMesh.material);
     }
@@ -57,7 +58,7 @@ export function getModelRootRotationX(up: '+Z' | '+Y'): number {
 export function computeCameraDistance(
   maxDimension: number,
   fovDegrees: number,
-  fitOffset = 1.35,
+  fitOffset = 1.8,
 ): number {
   const safeDimension = Math.max(maxDimension, 0.01);
   const safeFov = clamp(fovDegrees, 10, 120);
@@ -95,15 +96,19 @@ export function evaluateScaleWarning(maxDimension: number): string | null {
 export class SceneController {
   public onViewWarning: ((warning: string | null) => void) | null = null;
 
-  private readonly scene: Scene;
-  private readonly camera: PerspectiveCamera;
-  private readonly renderer: WebGLRenderer;
-  private readonly controls: OrbitControls;
+  private readonly scene: any;
+  private readonly camera: any;
+  private readonly renderer: any;
+  private readonly controls: any;
   private readonly canvas: HTMLCanvasElement;
-  private readonly modelRoot: Group;
-  private readonly referenceGrid: GridHelper;
+  private readonly modelRoot: any;
+  private readonly referenceGrid: any;
   private currentRobot: UrdfRobotLike | null = null;
+  private visualNodes: any[] = [];
+  private collisionNodes: any[] = [];
   private modelUpAxis: '+Z' | '+Y' = '+Z';
+  private showVisual = true;
+  private showCollision = false;
   private animationFrameId = 0;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -167,9 +172,24 @@ export class SceneController {
     this.currentRobot = robot;
     this.modelRoot.add(robot);
     this.applyMeshDefaults(robot);
+    this.collectGeometryNodes(robot);
+    this.setGeometryVisibility(this.showVisual, this.showCollision);
     const box = this.frameRobot(robot);
     if (box) {
       this.updateGroundAndGrid(box);
+    }
+  }
+
+  setGeometryVisibility(showVisual: boolean, showCollision: boolean): void {
+    this.showVisual = showVisual;
+    this.showCollision = showCollision;
+
+    for (const node of this.visualNodes) {
+      node.visible = showVisual;
+    }
+
+    for (const node of this.collisionNodes) {
+      node.visible = showCollision;
     }
   }
 
@@ -181,10 +201,12 @@ export class SceneController {
     this.modelRoot.remove(this.currentRobot);
     disposeObjectTree(this.currentRobot);
     this.currentRobot = null;
+    this.visualNodes = [];
+    this.collisionNodes = [];
     this.emitWarning(null);
   }
 
-  frameRobot(robot: UrdfRobotLike | null = this.currentRobot): Box3 | null {
+  frameRobot(robot: UrdfRobotLike | null = this.currentRobot): any | null {
     if (!robot) {
       return null;
     }
@@ -199,13 +221,16 @@ export class SceneController {
     const size = box.getSize(new Vector3());
     const maxDimension = Math.max(size.x, size.y, size.z, 0.01);
     const distance = computeCameraDistance(maxDimension, this.camera.fov);
+    const horizontalAngle = (Math.PI * 3) / 4;
+    const verticalAngle = Math.PI / 6;
+    const cameraOffset = new Vector3(
+      distance * Math.cos(verticalAngle) * Math.sin(horizontalAngle),
+      distance * Math.sin(verticalAngle),
+      -distance * Math.cos(verticalAngle) * Math.cos(horizontalAngle),
+    );
 
     this.controls.target.copy(center);
-    this.camera.position.set(
-      center.x + distance * 0.85,
-      center.y + distance * 0.6,
-      center.z + distance * 0.95,
-    );
+    this.camera.position.copy(center).add(cameraOffset);
     this.camera.near = Math.max(0.01, distance / 120);
     this.camera.far = Math.max(200, distance * 55);
     this.camera.updateProjectionMatrix();
@@ -214,7 +239,7 @@ export class SceneController {
     return box;
   }
 
-  updateGroundAndGrid(box: Box3): void {
+  updateGroundAndGrid(box: any): void {
     if (box.isEmpty()) {
       return;
     }
@@ -250,8 +275,8 @@ export class SceneController {
   }
 
   private applyMeshDefaults(robot: UrdfRobotLike): void {
-    robot.traverse((child) => {
-      const maybeMesh = child as Mesh;
+    robot.traverse((child: unknown) => {
+      const maybeMesh = child as any;
       if (!maybeMesh.isMesh) {
         return;
       }
@@ -259,6 +284,27 @@ export class SceneController {
       maybeMesh.castShadow = true;
       maybeMesh.receiveShadow = true;
     });
+  }
+
+  private collectGeometryNodes(robot: UrdfRobotLike): void {
+    const visualNodes = new Set<any>();
+    const collisionNodes = new Set<any>();
+
+    robot.traverse((child: unknown) => {
+      const node = child as any & {
+        isURDFVisual?: boolean;
+        isURDFCollider?: boolean;
+      };
+
+      if (node.isURDFCollider) {
+        collisionNodes.add(node);
+      } else if (node.isURDFVisual) {
+        visualNodes.add(node);
+      }
+    });
+
+    this.visualNodes = [...visualNodes];
+    this.collisionNodes = [...collisionNodes];
   }
 
   private animate(): void {
