@@ -10,22 +10,16 @@
 - Provide a brief plan first (files to touch + validation steps), then make changes.
 - When adding new features, do not break existing functionality or workflows unless I explicitly request it.
 - Add comments where helpful for future maintenance and readability, but keep the implementation as simple and non-redundant as possible.
+
 - `ref/` contains open-source reference repositories with functionality similar to this project; when implementing features, prefer searching `ref/` first for related examples/implementations.
 - `robots/` and `motions/` store robot model files and motion files, respectively; consult them when you need concrete asset formats, conventions, or example data.
 - Reference index: see the project list/short descriptions in `https://github.com/Renkunzhao/legged-robotics-lab/blob/main/README.md` for ideas of similar repos to consult.
 - These folders can be large: search and read on-demand only (open only the few files relevant to the current task), and do not blindly scan/load entire directories.
+
 - After implementing a request, you must update BOTH READMEs:
   - README.md (English)
   - README.zh.md (Chinese)
   Keep the information consistent across both files, and only edit the relevant sections.
-
-## Commit message standard (always output 3 candidates)
-- When I ask you to summarize this session, summarize all changes made in the current session and reference the current `git diff`, then propose appropriate git commit suggestions (e.g., 3 candidate commit messages following the commit standard).
-- Conventional Commits: `<type>(<scope>): <subject>`
-- types: feat, fix, refactor, perf, docs, test, build, ci, chore
-- scopes: model, motion, ui
-- subject: English imperative, no trailing period, prefer <= 72 chars
-- For each candidate, add one Chinese sentence explaining why that type/scope fits.
 
 ## Safety
 - If necessary, you may `git clone` an open-source repository into `ref/` for reference, but only after I explicitly approve.
