@@ -205,6 +205,8 @@ export class BvhMotionService {
 
     const sceneObject = new Group();
     sceneObject.name = `${clipName}-root`;
+    // Expose the animated BVH root for camera root-lock tracking.
+    sceneObject.userData.rootTrackNode = rootBone;
     sceneObject.add(rootBone);
     sceneObject.add(helper);
 

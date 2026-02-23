@@ -77,6 +77,7 @@ describe('BvhMotionService', () => {
     expect(result.fps).toBeCloseTo(30, 3);
     expect(result.jointCount).toBe(2);
     expect(result.sceneObject.children.length).toBe(2);
+    expect(result.sceneObject.userData.rootTrackNode).toBe(result.playbackTarget.skeleton.bones[0]);
     expect(result.playbackTarget.skeleton.bones.length).toBeGreaterThan(0);
   });
 

@@ -26,6 +26,7 @@ Its core purpose is to quickly load robot models in the browser and play motion 
 - Dropping CSV while only BVH is loaded shows temporary warning, then auto-returns to ready layout
 - BVH (.bvh): drag and drop to play in BVH preview mode
 - BVH playback uses Y-up orientation and auto-recenters first-frame root X/Z offset
+- In `root lock` view mode, BVH now tracks the animated root bone position (similar to BVHView `track`)
 - Unsupported drops can trigger a temporary red warning panel, then return to ready layout while keeping the last warning in the lower-left hint
 - Controls: `Space` play/pause, `R` reset to frame 1, `Tab` switch view mode, slider seek
 
@@ -54,5 +55,6 @@ Its core purpose is to quickly load robot models in the browser and play motion 
 
 ## References
 
-- Reference repository: https://github.com/fan-ziqi/robot_viewer.git
+- [Robot Viewer](https://viewer.robotsfan.com/)
+- [BVHView](https://theorangeduck.com/media/uploads/BVHView/bvhview.html)
 - This project was completed using Codex vibe coding.

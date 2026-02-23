@@ -26,6 +26,7 @@
 - 仅加载 BVH 时若拖入 CSV，会短暂告警并自动回到 ready 布局
 - BVH (.bvh)：直接拖入即可在 BVH 预览模式播放
 - BVH 播放采用 Y-up 朝向，并会自动消除首帧根节点 X/Z 偏移以居中
+- 在 `root lock` 视角模式下，BVH 现已跟踪动画根骨骼位置（类似 BVHView 的 `track`）
 - 拖入不支持文件时会短暂显示红色告警面板，随后自动回到 ready 布局，并在左下角保留上一条告警提示
 - 操作：`Space` 播放/暂停，`R` 重置到第 1 帧，`Tab` 切换视角模式，滑块可拖动定位帧
 
@@ -55,4 +56,5 @@
 ## 参考
 
 - 参考仓库：https://github.com/fan-ziqi/robot_viewer.git
+- [BVHView](https://theorangeduck.com/media/uploads/BVHView/bvhview.html)
 - 本项目使用 Codex vibe coding 完成。

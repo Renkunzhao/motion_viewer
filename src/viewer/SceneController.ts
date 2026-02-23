@@ -662,6 +662,12 @@ export class SceneController {
       return this.tempTrackTarget;
     }
 
+    const rootTrackNode = robotAny.userData?.rootTrackNode;
+    if (rootTrackNode && typeof rootTrackNode.getWorldPosition === 'function') {
+      rootTrackNode.getWorldPosition(this.tempTrackTarget);
+      return this.tempTrackTarget;
+    }
+
     if (typeof robotAny.getWorldPosition === 'function') {
       robotAny.getWorldPosition(this.tempTrackTarget);
       return this.tempTrackTarget;
