@@ -57,6 +57,7 @@ export class AppController {
   private viewerState: ViewerState = 'idle';
   private titleOverride: string | null = null;
   private detailOverride: string | null = null;
+  private dropHintOverride: string | null = null;
   private warnings: string[] = [];
   private sceneWarning: string | null = null;
   private droppedFileMap: DroppedFileMap | null = null;
@@ -81,6 +82,8 @@ export class AppController {
   private motionFrameSnapshot: MotionFrameSnapshot | null = null;
   private isMotionPlaying = false;
   private viewMode: ViewMode = 'free';
+  private recoverReadyTimer: number | null = null;
+  private recoverableDropHint: string | null = null;
 
   private readonly onWindowResize = (): void => {
     this.sceneController.resize();
@@ -326,9 +329,11 @@ export class AppController {
     this.selectedUrdfPath = null;
     this.lastLoadResult = null;
     this.sceneWarning = null;
+    this.recoverableDropHint = null;
     this.urdfLoadService.dispose();
     this.sceneController.setModelUpAxis('+Z');
     this.sceneController.clearRobot();
+    this.sceneController.resetView();
     this.motionPlayer.attachRobot(null);
     this.clearMotionPlayback();
     this.renderUrdfList();
@@ -336,6 +341,7 @@ export class AppController {
   }
 
   dispose(): void {
+    this.clearRecoverReadyTimer();
     this.removeDropHandlers();
     window.removeEventListener('resize', this.onWindowResize);
     window.removeEventListener('keydown', this.onWindowKeyDown);
@@ -406,10 +412,11 @@ export class AppController {
       return;
     }
 
-    this.setState('error', {
-      title: 'No Supported Files',
-      detail: 'Drop URDF model files, motion CSV, or BVH motion files.',
-    });
+    this.showRecoverableDropError(
+      'No Supported Files',
+      'Drop URDF model files, motion CSV, or BVH motion files.',
+      'Unsupported files were ignored. Drop URDF/CSV/BVH to continue.',
+    );
   }
 
   private async loadSelectedUrdf(urdfPath: string): Promise<void> {
@@ -435,6 +442,7 @@ export class AppController {
       this.motionPlayer.attachRobot(result.robot);
       this.lastLoadResult = result;
       this.selectedUrdfPath = result.selectedUrdfPath;
+      this.recoverableDropHint = null;
       this.renderUrdfList();
       this.renderReadyState(result);
     } catch (error) {
@@ -449,10 +457,11 @@ export class AppController {
   private async loadMotionFromDroppedFiles(fileMap: DroppedFileMap): Promise<void> {
     const loadedRobotResult = this.lastLoadResult;
     if (!loadedRobotResult) {
-      this.setState('error', {
-        title: 'No Robot Loaded',
-        detail: 'Load a URDF robot before dropping CSV motion.',
-      });
+      this.showRecoverableDropError(
+        'URDF Required For CSV',
+        'Load a URDF robot first, then drop CSV motion.',
+        'CSV needs an active URDF robot. Drop URDF first, then CSV.',
+      );
       return;
     }
 
@@ -488,6 +497,7 @@ export class AppController {
       };
       this.playActiveMotion();
       this.syncMotionControls();
+      this.recoverableDropHint = null;
       this.renderReadyState(loadedRobotResult);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -543,6 +553,7 @@ export class AppController {
       this.sceneController.syncGroundToCurrentRobot();
       this.playActiveMotion();
       this.syncMotionControls();
+      this.recoverableDropHint = null;
       this.renderBvhReadyState();
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -641,12 +652,18 @@ export class AppController {
     overrides: {
       title?: string;
       detail?: string;
+      dropHint?: string;
       warnings?: string[];
     } = {},
   ): void {
+    if (state !== 'error') {
+      this.clearRecoverReadyTimer();
+    }
+
     this.viewerState = state;
     this.titleOverride = overrides.title ?? null;
     this.detailOverride = overrides.detail ?? null;
+    this.dropHintOverride = overrides.dropHint ?? null;
     this.warnings = overrides.warnings ? [...overrides.warnings] : [];
     this.renderState();
   }
@@ -657,7 +674,7 @@ export class AppController {
     this.stateChip.textContent = copy.chip;
     this.statusTitle.textContent = this.titleOverride ?? copy.title;
     this.statusDetail.textContent = this.detailOverride ?? copy.detail;
-    this.dropHint.textContent = copy.dropHint;
+    this.dropHint.textContent = this.dropHintOverride ?? copy.dropHint;
 
     this.statusWarnings.innerHTML = '';
     for (const warning of this.warnings) {
@@ -683,6 +700,7 @@ export class AppController {
     this.setState('ready', {
       title: `Loaded ${result.robotName || 'URDF Robot'}`,
       detail: `${result.jointCount} joints, ${result.linkCount} links, source: ${result.selectedUrdfPath}. Drop URDF to replace robot.${motionDetail}${sourceDetail}${viewModeDetail}`,
+      dropHint: this.buildReadyDropHint(),
       warnings: this.collectReadyWarnings(result.warnings),
     });
   }
@@ -707,6 +725,7 @@ export class AppController {
     this.setState('ready', {
       title: `Loaded ${this.currentBvhMotion.name}`,
       detail,
+      dropHint: this.buildReadyDropHint(),
       warnings: this.collectReadyWarnings([]),
     });
   }
@@ -720,6 +739,58 @@ export class AppController {
     if (this.currentMotionKind === 'bvh' && this.currentBvhMotion) {
       this.renderBvhReadyState();
     }
+  }
+
+  private clearRecoverReadyTimer(): void {
+    if (this.recoverReadyTimer === null) {
+      return;
+    }
+
+    window.clearTimeout(this.recoverReadyTimer);
+    this.recoverReadyTimer = null;
+  }
+
+  private hasRecoverableReadyState(): boolean {
+    return Boolean(
+      this.lastLoadResult ||
+      (this.currentMotionKind === 'bvh' && this.currentBvhMotion),
+    );
+  }
+
+  private scheduleRecoverToReady(delayMs = 1400): void {
+    this.clearRecoverReadyTimer();
+    if (!this.hasRecoverableReadyState()) {
+      return;
+    }
+
+    this.recoverReadyTimer = window.setTimeout(() => {
+      this.recoverReadyTimer = null;
+      if (this.viewerState === 'error') {
+        this.renderCurrentReadyState();
+      }
+    }, delayMs);
+  }
+
+  private showRecoverableDropError(title: string, detail: string, dropHint: string): void {
+    if (this.hasRecoverableReadyState()) {
+      this.recoverableDropHint = `${title}. ${dropHint}`;
+    }
+
+    this.setState('error', {
+      title,
+      detail,
+      dropHint,
+    });
+    this.scheduleRecoverToReady();
+  }
+
+  private buildReadyDropHint(): string | undefined {
+    if (!this.recoverableDropHint) {
+      return undefined;
+    }
+
+    const baseReadyHint = getStateCopy('ready').dropHint;
+    return `${baseReadyHint} Last warning: ${this.recoverableDropHint}`;
   }
 
   private collectReadyWarnings(robotWarnings: string[]): string[] {

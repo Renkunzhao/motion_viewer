@@ -428,6 +428,15 @@ export class SceneController {
     this.camera.updateProjectionMatrix();
   }
 
+  resetView(): void {
+    this.controls.target.set(0, 0, 0);
+    this.camera.position.set(2, 2, 2);
+    this.camera.near = 0.05;
+    this.camera.far = 500;
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
+  }
+
   dispose(): void {
     cancelAnimationFrame(this.animationFrameId);
     this.controls.dispose();

@@ -20,6 +20,7 @@
   Keep the information consistent across both files, and only edit the relevant sections.
 
 ## Commit message standard (always output 3 candidates)
+- When I ask you to summarize this session, summarize all changes made in the current session and reference the current `git diff`, then propose appropriate git commit suggestions (e.g., 3 candidate commit messages following the commit standard).
 - Conventional Commits: `<type>(<scope>): <subject>`
 - types: feat, fix, refactor, perf, docs, test, build, ci, chore
 - scopes: model, motion, ui

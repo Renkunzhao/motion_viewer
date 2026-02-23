@@ -22,9 +22,11 @@ Its core purpose is to quickly load robot models in the browser and play motion 
 ## Supported Input And Operations
 
 - URDF (.urdf): drag and drop folder/multi-file set, or use Select Folder/Select Files
-- CSV (.csv): drop after URDF is loaded to drive robot joints
+- CSV (.csv): requires URDF loaded first; if URDF is missing, center panel shows guidance
+- Dropping CSV while only BVH is loaded shows temporary warning, then auto-returns to ready layout
 - BVH (.bvh): drag and drop to play in BVH preview mode
 - BVH playback uses Y-up orientation and auto-recenters first-frame root X/Z offset
+- Unsupported drops can trigger a temporary red warning panel, then return to ready layout while keeping the last warning in the lower-left hint
 - Controls: `Space` play/pause, `R` reset to frame 1, `Tab` switch view mode, slider seek
 
 ## Robot Support
