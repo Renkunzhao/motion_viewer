@@ -35,6 +35,21 @@ npm ci
 npm run build
 ```
 
+### Option 0 (recommended for beginners): GitHub Pages (no server)
+
+This repo includes `/.github/workflows/deploy-pages.yml`.
+After you push code to GitHub `main` or `master`, it can auto-deploy to Pages.
+
+Steps:
+1. Push this project to a GitHub repository.
+2. Open repository settings: `Settings` -> `Pages`.
+3. In `Build and deployment`, set `Source` to `GitHub Actions`.
+4. Push a commit to `main`/`master` branch (or manually run the `Deploy to GitHub Pages` workflow in `Actions` tab).
+5. Wait for workflow success, then open your site at:
+   - `https://<your-github-username>.github.io/<your-repo-name>/`
+
+If you see 404 initially, wait 1-2 minutes and refresh.
+
 ### Option A: Nginx
 
 Copy `dist/` to server, then use config like:
