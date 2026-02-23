@@ -262,6 +262,104 @@ body {
   background: rgba(83, 191, 157, 0.24);
 }
 
+.motion-controls {
+  margin-top: 0.7rem;
+  padding: 0.62rem 0.68rem;
+  border-radius: 12px;
+  border: 1px solid rgba(146, 205, 236, 0.24);
+  background: rgba(4, 16, 24, 0.48);
+}
+
+.motion-controls__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.motion-controls__title {
+  margin: 0;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.motion-controls__frame {
+  font-size: 0.8rem;
+  color: var(--text-main);
+}
+
+.motion-controls__actions {
+  margin-top: 0.5rem;
+  display: flex;
+  gap: 0.42rem;
+}
+
+.motion-controls__slider {
+  width: 100%;
+  margin: 0.66rem 0 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.motion-controls__slider:focus {
+  outline: none;
+}
+
+.motion-controls__slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(127, 168, 189, 0.4);
+  background: linear-gradient(90deg, rgba(73, 113, 135, 0.6), rgba(48, 76, 92, 0.64));
+}
+
+.motion-controls__slider:hover::-webkit-slider-runnable-track {
+  border-color: rgba(131, 223, 193, 0.7);
+  background: linear-gradient(90deg, rgba(89, 151, 178, 0.7), rgba(61, 97, 117, 0.74));
+}
+
+.motion-controls__slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  margin-top: -5px;
+  border: 2px solid rgba(0, 24, 34, 0.96);
+  background: #9adbc6;
+  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.28);
+}
+
+.motion-controls__slider:hover::-webkit-slider-thumb {
+  background: #b9f0da;
+}
+
+.motion-controls__slider::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(127, 168, 189, 0.4);
+  background: linear-gradient(90deg, rgba(73, 113, 135, 0.6), rgba(48, 76, 92, 0.64));
+}
+
+.motion-controls__slider::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 24, 34, 0.96);
+  background: #9adbc6;
+  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.28);
+}
+
+.motion-controls__name {
+  margin: 0.52rem 0 0;
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .status-panel__warnings {
   margin: 0.72rem 0 0;
   padding-left: 1.1rem;

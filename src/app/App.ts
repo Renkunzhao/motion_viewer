@@ -1,7 +1,19 @@
-import type { DroppedFileMap, LoadedRobotResult, ViewerState } from '../types/viewer';
+import type {
+  DroppedFileMap,
+  LoadedRobotResult,
+  MotionClip,
+  ViewerState,
+} from '../types/viewer';
 import { dataTransferToFileMap, fileListToFileMap } from '../io/drop/dataTransferToFileMap';
 import { registerDropHandlers } from '../io/drop/registerDropHandlers';
+import { CsvMotionService } from '../io/motion/CsvMotionService';
 import { UrdfLoadService } from '../io/urdf/UrdfLoadService';
+import {
+  G1_CSV_STRIDE,
+  G1_JOINT_NAMES,
+  G1_ROOT_JOINT_NAME,
+} from '../io/motion/G1MotionSchema';
+import { G1MotionPlayer, type MotionFrameSnapshot } from '../motion/G1MotionPlayer';
 import { SceneController } from '../viewer/SceneController';
 import { getStateCopy } from './state';
 
@@ -14,10 +26,24 @@ function requireElement<T extends HTMLElement>(id: string): T {
   return element as T;
 }
 
+function formatMissingJointMessage(missingJointNames: string[]): string {
+  const MAX_DISPLAY = 8;
+  const displayed = missingJointNames.slice(0, MAX_DISPLAY).join(', ');
+  const hiddenCount = Math.max(0, missingJointNames.length - MAX_DISPLAY);
+
+  if (hiddenCount === 0) {
+    return `Motion is incompatible with current URDF. Missing required joints: ${displayed}.`;
+  }
+
+  return `Motion is incompatible with current URDF. Missing required joints: ${displayed}, and ${hiddenCount} more.`;
+}
+
 export class AppController {
   private readonly appRoot: HTMLDivElement;
   private readonly sceneController: SceneController;
   private readonly urdfLoadService: UrdfLoadService;
+  private readonly csvMotionService: CsvMotionService;
+  private readonly motionPlayer: G1MotionPlayer;
   private readonly dropHint: HTMLParagraphElement;
   private readonly stateChip: HTMLSpanElement;
   private readonly statusTitle: HTMLElement;
@@ -27,6 +53,12 @@ export class AppController {
   private readonly urdfList: HTMLUListElement;
   private readonly showVisualButton: HTMLButtonElement;
   private readonly showCollisionButton: HTMLButtonElement;
+  private readonly motionControlsSection: HTMLElement;
+  private readonly motionPlayButton: HTMLButtonElement;
+  private readonly motionResetButton: HTMLButtonElement;
+  private readonly motionFrameSlider: HTMLInputElement;
+  private readonly motionFrameLabel: HTMLSpanElement;
+  private readonly motionName: HTMLParagraphElement;
   private readonly folderInput: HTMLInputElement;
   private readonly fileInput: HTMLInputElement;
   private readonly pickFolderButton: HTMLButtonElement;
@@ -44,6 +76,11 @@ export class AppController {
   private showVisual = true;
   private showCollision = false;
   private lastLoadResult: LoadedRobotResult | null = null;
+  private currentMotionClip: MotionClip | null = null;
+  private currentMotionSourcePath: string | null = null;
+  private motionWarnings: string[] = [];
+  private motionFrameSnapshot: MotionFrameSnapshot | null = null;
+  private isMotionPlaying = false;
 
   private readonly onWindowResize = (): void => {
     this.sceneController.resize();
@@ -98,6 +135,40 @@ export class AppController {
     void this.loadSelectedUrdf(urdfPath);
   };
 
+  private readonly onMotionPlayClick = (): void => {
+    if (!this.currentMotionClip) {
+      return;
+    }
+
+    if (this.isMotionPlaying) {
+      this.motionPlayer.pause();
+      return;
+    }
+
+    this.motionPlayer.play();
+  };
+
+  private readonly onMotionResetClick = (): void => {
+    if (!this.currentMotionClip) {
+      return;
+    }
+
+    this.motionPlayer.reset();
+  };
+
+  private readonly onMotionFrameInput = (): void => {
+    if (!this.currentMotionClip) {
+      return;
+    }
+
+    const frameIndex = Number(this.motionFrameSlider.value);
+    if (!Number.isFinite(frameIndex)) {
+      return;
+    }
+
+    this.motionPlayer.seek(frameIndex);
+  };
+
   constructor() {
     this.appRoot = requireElement<HTMLDivElement>('app');
     const canvas = requireElement<HTMLCanvasElement>('viewer-canvas');
@@ -110,6 +181,12 @@ export class AppController {
     this.urdfList = requireElement<HTMLUListElement>('urdf-list');
     this.showVisualButton = requireElement<HTMLButtonElement>('show-visual-btn');
     this.showCollisionButton = requireElement<HTMLButtonElement>('show-collision-btn');
+    this.motionControlsSection = requireElement<HTMLElement>('motion-controls-section');
+    this.motionPlayButton = requireElement<HTMLButtonElement>('motion-play-btn');
+    this.motionResetButton = requireElement<HTMLButtonElement>('motion-reset-btn');
+    this.motionFrameSlider = requireElement<HTMLInputElement>('motion-frame-slider');
+    this.motionFrameLabel = requireElement<HTMLSpanElement>('motion-frame-label');
+    this.motionName = requireElement<HTMLParagraphElement>('motion-name');
     this.folderInput = requireElement<HTMLInputElement>('folder-input');
     this.fileInput = requireElement<HTMLInputElement>('file-input');
     this.pickFolderButton = requireElement<HTMLButtonElement>('pick-folder-btn');
@@ -126,6 +203,29 @@ export class AppController {
     };
 
     this.urdfLoadService = new UrdfLoadService();
+    this.csvMotionService = new CsvMotionService();
+    this.motionPlayer = new G1MotionPlayer();
+    this.motionPlayer.onFrameChanged = (snapshot) => {
+      this.motionFrameSnapshot = snapshot;
+      this.syncMotionControls();
+    };
+    this.motionPlayer.onPlaybackStateChanged = (isPlaying) => {
+      this.isMotionPlaying = isPlaying;
+      this.syncMotionControls();
+      if (this.lastLoadResult && this.viewerState === 'ready') {
+        this.renderReadyState(this.lastLoadResult);
+      }
+    };
+    this.motionPlayer.onWarning = (warning) => {
+      if (!this.motionWarnings.includes(warning)) {
+        this.motionWarnings.push(warning);
+      }
+
+      if (this.lastLoadResult && this.viewerState === 'ready') {
+        this.renderReadyState(this.lastLoadResult);
+      }
+    };
+
     this.removeDropHandlers = registerDropHandlers(document, {
       onDrop: (dataTransfer) => this.handleDrop(dataTransfer),
       onDragStateChange: (isDragging) => this.handleDragStateChange(isDragging),
@@ -140,8 +240,12 @@ export class AppController {
     this.showVisualButton.addEventListener('click', this.onShowVisualClick);
     this.showCollisionButton.addEventListener('click', this.onShowCollisionClick);
     this.urdfList.addEventListener('click', this.onUrdfListClick);
+    this.motionPlayButton.addEventListener('click', this.onMotionPlayClick);
+    this.motionResetButton.addEventListener('click', this.onMotionResetClick);
+    this.motionFrameSlider.addEventListener('input', this.onMotionFrameInput);
 
     this.syncVisibilityButtons();
+    this.syncMotionControls();
     this.renderState();
   }
 
@@ -158,6 +262,8 @@ export class AppController {
     this.sceneWarning = null;
     this.urdfLoadService.dispose();
     this.sceneController.clearRobot();
+    this.motionPlayer.attachRobot(null);
+    this.clearMotionPlayback();
     this.renderUrdfList();
     this.setState('idle');
   }
@@ -173,8 +279,12 @@ export class AppController {
     this.showVisualButton.removeEventListener('click', this.onShowVisualClick);
     this.showCollisionButton.removeEventListener('click', this.onShowCollisionClick);
     this.urdfList.removeEventListener('click', this.onUrdfListClick);
+    this.motionPlayButton.removeEventListener('click', this.onMotionPlayClick);
+    this.motionResetButton.removeEventListener('click', this.onMotionResetClick);
+    this.motionFrameSlider.removeEventListener('input', this.onMotionFrameInput);
 
     this.urdfLoadService.dispose();
+    this.motionPlayer.dispose();
     this.sceneController.dispose();
   }
 
@@ -189,10 +299,6 @@ export class AppController {
 
   private async handleDroppedFileMap(fileMap: DroppedFileMap): Promise<void> {
     if (fileMap.size === 0) {
-      this.droppedFileMap = null;
-      this.availableUrdfPaths = [];
-      this.selectedUrdfPath = null;
-      this.renderUrdfList();
       this.setState('error', {
         title: 'No Files Found',
         detail: 'Drop payload did not contain files. Try selecting a folder or file set again.',
@@ -200,20 +306,35 @@ export class AppController {
       return;
     }
 
-    this.droppedFileMap = fileMap;
-    this.availableUrdfPaths = this.urdfLoadService.getAvailableUrdfPaths(fileMap);
-    this.selectedUrdfPath = this.availableUrdfPaths[0] ?? null;
-    this.renderUrdfList();
+    const urdfPaths = this.urdfLoadService.getAvailableUrdfPaths(fileMap);
+    if (urdfPaths.length > 0) {
+      this.droppedFileMap = fileMap;
+      this.availableUrdfPaths = urdfPaths;
+      this.selectedUrdfPath = urdfPaths[0] ?? null;
+      this.renderUrdfList();
 
-    if (!this.selectedUrdfPath) {
-      this.setState('error', {
-        title: 'No URDF Found',
-        detail: 'Dropped files do not contain .urdf models.',
-      });
+      if (!this.selectedUrdfPath) {
+        this.setState('error', {
+          title: 'No URDF Found',
+          detail: 'Dropped files do not contain .urdf models.',
+        });
+        return;
+      }
+
+      await this.loadSelectedUrdf(this.selectedUrdfPath);
       return;
     }
 
-    await this.loadSelectedUrdf(this.selectedUrdfPath);
+    const csvPaths = this.csvMotionService.getAvailableCsvPaths(fileMap);
+    if (csvPaths.length > 0) {
+      await this.loadMotionFromDroppedFiles(fileMap);
+      return;
+    }
+
+    this.setState('error', {
+      title: 'No Supported Files',
+      detail: 'Drop URDF files or a G1 CSV motion file.',
+    });
   }
 
   private async loadSelectedUrdf(urdfPath: string): Promise<void> {
@@ -226,6 +347,7 @@ export class AppController {
     this.selectedUrdfPath = urdfPath;
     this.renderUrdfList();
     this.sceneController.clearRobot();
+    this.clearMotionPlayback();
     this.setState('loading', {
       detail: `Loading ${urdfPath} ...`,
     });
@@ -234,6 +356,7 @@ export class AppController {
       const result = await this.urdfLoadService.loadFromDroppedFiles(this.droppedFileMap, urdfPath);
       this.sceneController.setRobot(result.robot);
       this.sceneController.setGeometryVisibility(this.showVisual, this.showCollision);
+      this.motionPlayer.attachRobot(result.robot);
       this.lastLoadResult = result;
       this.selectedUrdfPath = result.selectedUrdfPath;
       this.renderUrdfList();
@@ -245,6 +368,67 @@ export class AppController {
         detail: reason,
       });
     }
+  }
+
+  private async loadMotionFromDroppedFiles(fileMap: DroppedFileMap): Promise<void> {
+    const loadedRobotResult = this.lastLoadResult;
+    if (!loadedRobotResult) {
+      this.setState('error', {
+        title: 'No Robot Loaded',
+        detail: 'Load a URDF robot before dropping CSV motion.',
+      });
+      return;
+    }
+
+    this.setState('loading', {
+      detail: 'Loading motion CSV ...',
+    });
+
+    try {
+      const result = await this.csvMotionService.loadFromDroppedFiles(fileMap);
+      const attachmentReport = this.motionPlayer.attachRobot(loadedRobotResult.robot);
+      if (attachmentReport.missingRequiredJoints.length > 0) {
+        throw new Error(formatMissingJointMessage(attachmentReport.missingRequiredJoints));
+      }
+
+      const bindingReport = this.motionPlayer.loadClip(result.clip);
+
+      this.currentMotionClip = result.clip;
+      this.currentMotionSourcePath = result.selectedCsvPath;
+      this.motionWarnings = [...result.warnings];
+      if (bindingReport.missingRootJoint) {
+        this.motionWarnings.push(
+          `Joint "${G1_ROOT_JOINT_NAME}" was not found. Root translation/rotation is ignored.`,
+        );
+      }
+
+      this.motionFrameSnapshot = {
+        frameIndex: 0,
+        frameCount: result.clip.frameCount,
+        fps: result.clip.fps,
+        timeSeconds: 0,
+      };
+      this.motionPlayer.play();
+      this.syncMotionControls();
+      this.renderReadyState(loadedRobotResult);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.setState('error', {
+        title: 'Motion Load Failed',
+        detail: reason,
+      });
+    }
+  }
+
+  private clearMotionPlayback(): void {
+    this.motionPlayer.pause();
+    this.motionPlayer.loadClip(null);
+    this.currentMotionClip = null;
+    this.currentMotionSourcePath = null;
+    this.motionWarnings = [];
+    this.motionFrameSnapshot = null;
+    this.isMotionPlaying = false;
+    this.syncMotionControls();
   }
 
   private handleDragStateChange(isDragging: boolean): void {
@@ -297,24 +481,75 @@ export class AppController {
   }
 
   private renderReadyState(result: LoadedRobotResult): void {
+    const motionDetail = this.currentMotionClip
+      ? ` Motion: ${this.currentMotionClip.name} (${this.currentMotionClip.frameCount} frames @ ${this.currentMotionClip.fps} FPS, ${this.isMotionPlaying ? 'playing' : 'paused'}). Drop CSV to replace motion.`
+      : ' Drop CSV to load G1 motion.';
+
+    const sourceDetail = this.currentMotionSourcePath
+      ? ` Motion source: ${this.currentMotionSourcePath}.`
+      : '';
+
     this.setState('ready', {
       title: `Loaded ${result.robotName || 'URDF Robot'}`,
-      detail: `${result.jointCount} joints, ${result.linkCount} links, source: ${result.selectedUrdfPath}. Drop to replace.`,
-      warnings: this.mergeWarnings(result.warnings, this.sceneWarning),
+      detail: `${result.jointCount} joints, ${result.linkCount} links, source: ${result.selectedUrdfPath}. Drop URDF to replace robot.${motionDetail}${sourceDetail}`,
+      warnings: this.collectReadyWarnings(result.warnings),
     });
   }
 
-  private mergeWarnings(primary: string[], secondary: string | null): string[] {
-    const merged = new Set(primary);
-    if (secondary) {
-      merged.add(secondary);
+  private collectReadyWarnings(robotWarnings: string[]): string[] {
+    const merged = new Set<string>(robotWarnings);
+    for (const warning of this.motionWarnings) {
+      merged.add(warning);
     }
+
+    if (this.sceneWarning) {
+      merged.add(this.sceneWarning);
+    }
+
     return [...merged];
   }
 
   private syncVisibilityButtons(): void {
     this.showVisualButton.classList.toggle('active', this.showVisual);
     this.showCollisionButton.classList.toggle('active', this.showCollision);
+  }
+
+  private syncMotionControls(): void {
+    const hasMotion = Boolean(this.currentMotionClip);
+    this.motionControlsSection.hidden = !hasMotion;
+    this.motionPlayButton.disabled = !hasMotion;
+    this.motionResetButton.disabled = !hasMotion;
+
+    if (!hasMotion || !this.currentMotionClip) {
+      this.motionPlayButton.textContent = 'Play';
+      this.motionPlayButton.classList.remove('active');
+      this.motionFrameSlider.min = '0';
+      this.motionFrameSlider.max = '0';
+      this.motionFrameSlider.value = '0';
+      this.motionFrameLabel.textContent = 'Frame 0 / 0';
+      this.motionName.textContent = 'No motion loaded';
+      return;
+    }
+
+    this.motionPlayButton.textContent = this.isMotionPlaying ? 'Pause' : 'Play';
+    this.motionPlayButton.classList.toggle('active', this.isMotionPlaying);
+
+    const snapshot =
+      this.motionFrameSnapshot ??
+      ({
+        frameIndex: 0,
+        frameCount: this.currentMotionClip.frameCount,
+        fps: this.currentMotionClip.fps,
+        timeSeconds: 0,
+      } as MotionFrameSnapshot);
+
+    const maxFrame = Math.max(snapshot.frameCount - 1, 0);
+    this.motionFrameSlider.min = '0';
+    this.motionFrameSlider.max = String(maxFrame);
+    this.motionFrameSlider.step = '1';
+    this.motionFrameSlider.value = String(snapshot.frameIndex);
+    this.motionFrameLabel.textContent = `Frame ${snapshot.frameIndex + 1} / ${snapshot.frameCount}`;
+    this.motionName.textContent = `${this.currentMotionClip.name} · ${this.currentMotionClip.fps} FPS · ${G1_CSV_STRIDE} cols (${G1_JOINT_NAMES.length} joints + root)`;
   }
 
   private renderUrdfList(): void {

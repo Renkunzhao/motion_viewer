@@ -51,6 +51,26 @@
           <p class="urdf-list-section__title">URDF Files</p>
           <ul id="urdf-list" class="urdf-list"></ul>
         </section>
+        <section id="motion-controls-section" class="motion-controls" hidden>
+          <div class="motion-controls__top">
+            <p class="motion-controls__title">Motion</p>
+            <span id="motion-frame-label" class="motion-controls__frame">Frame 0 / 0</span>
+          </div>
+          <div class="motion-controls__actions">
+            <button id="motion-play-btn" type="button" class="toggle-chip">Play</button>
+            <button id="motion-reset-btn" type="button" class="toggle-chip">Reset</button>
+          </div>
+          <input
+            id="motion-frame-slider"
+            class="motion-controls__slider"
+            type="range"
+            min="0"
+            max="0"
+            step="1"
+            value="0"
+          />
+          <p id="motion-name" class="motion-controls__name">No motion loaded</p>
+        </section>
         <ul id="status-warnings" class="status-panel__warnings"></ul>
       </aside>
     </div>
@@ -61,7 +81,7 @@
       type="file"
       multiple
       hidden
-      accept=".urdf,.stl,.obj,.dae,.xml,.png,.jpg,.jpeg,.bmp,.gif,.tga,.webp"
+      accept=".urdf,.csv,.stl,.obj,.dae,.xml,.png,.jpg,.jpeg,.bmp,.gif,.tga,.webp"
     />
     <script type="module" src="/src/main.ts"></script>
   </body>
