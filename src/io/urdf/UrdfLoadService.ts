@@ -4,7 +4,16 @@ import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import URDFLoader from 'urdf-loader';
 
-import type { DroppedFileMap, LoadedRobotResult, UrdfRobotLike } from '../../types/viewer';
+import {
+  DEFAULT_ROOT_COMPONENT_COUNT,
+  DEFAULT_ROOT_JOINT_NAME,
+} from '../motion/MotionSchema';
+import type {
+  DroppedFileMap,
+  LoadedRobotResult,
+  MotionSchema,
+  UrdfRobotLike,
+} from '../../types/viewer';
 import {
   getBaseName,
   getFileExtension,
@@ -13,6 +22,34 @@ import {
   sortUrdfPaths,
   resolveFileKeyForRequest,
 } from './pathResolver';
+
+function buildMotionSchema(robot: UrdfRobotLike): MotionSchema {
+  const joints = robot.joints ?? {};
+  const jointNames: string[] = [];
+  let floatingRootJointName: string | null = null;
+
+  for (const [jointName, joint] of Object.entries(joints)) {
+    const jointType = String(joint?.jointType ?? '').toLowerCase();
+    if (jointType === 'fixed') {
+      continue;
+    }
+
+    if (jointType === 'floating') {
+      if (!floatingRootJointName) {
+        floatingRootJointName = jointName;
+      }
+      continue;
+    }
+
+    jointNames.push(jointName);
+  }
+
+  return {
+    rootJointName: floatingRootJointName ?? DEFAULT_ROOT_JOINT_NAME,
+    rootComponentCount: DEFAULT_ROOT_COMPONENT_COUNT,
+    jointNames,
+  };
+}
 
 export class UrdfLoadService {
   private readonly objectUrls = new Set<string>();
@@ -171,6 +208,7 @@ export class UrdfLoadService {
     const urdfBlob = new Blob([urdfContent], { type: 'text/xml' });
     const urdfUrl = this.registerObjectUrl(urdfBlob);
     const robot = await this.loadUrdfWithUrl(loader, urdfUrl);
+    const motionSchema = buildMotionSchema(robot);
 
     return {
       robot,
@@ -178,6 +216,7 @@ export class UrdfLoadService {
       linkCount: robot.links ? Object.keys(robot.links).length : 0,
       jointCount: robot.joints ? Object.keys(robot.joints).length : 0,
       selectedUrdfPath,
+      motionSchema,
       warnings: [...warnings],
     };
   }

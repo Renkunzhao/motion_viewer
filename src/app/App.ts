@@ -9,11 +9,6 @@ import { dataTransferToFileMap, fileListToFileMap } from '../io/drop/dataTransfe
 import { registerDropHandlers } from '../io/drop/registerDropHandlers';
 import { CsvMotionService } from '../io/motion/CsvMotionService';
 import { UrdfLoadService } from '../io/urdf/UrdfLoadService';
-import {
-  G1_CSV_STRIDE,
-  G1_JOINT_NAMES,
-  G1_ROOT_JOINT_NAME,
-} from '../io/motion/G1MotionSchema';
 import { G1MotionPlayer, type MotionFrameSnapshot } from '../motion/G1MotionPlayer';
 import { SceneController } from '../viewer/SceneController';
 import { getStateCopy } from './state';
@@ -25,18 +20,6 @@ function requireElement<T extends HTMLElement>(id: string): T {
   }
 
   return element as T;
-}
-
-function formatMissingJointMessage(missingJointNames: string[]): string {
-  const MAX_DISPLAY = 8;
-  const displayed = missingJointNames.slice(0, MAX_DISPLAY).join(', ');
-  const hiddenCount = Math.max(0, missingJointNames.length - MAX_DISPLAY);
-
-  if (hiddenCount === 0) {
-    return `Motion is incompatible with current URDF. Missing required joints: ${displayed}.`;
-  }
-
-  return `Motion is incompatible with current URDF. Missing required joints: ${displayed}, and ${hiddenCount} more.`;
 }
 
 export class AppController {
@@ -379,7 +362,7 @@ export class AppController {
 
     this.setState('error', {
       title: 'No Supported Files',
-      detail: 'Drop URDF files or a G1 CSV motion file.',
+      detail: 'Drop URDF files or a motion CSV file.',
     });
   }
 
@@ -431,12 +414,11 @@ export class AppController {
     });
 
     try {
-      const result = await this.csvMotionService.loadFromDroppedFiles(fileMap);
-      const attachmentReport = this.motionPlayer.attachRobot(loadedRobotResult.robot);
-      if (attachmentReport.missingRequiredJoints.length > 0) {
-        throw new Error(formatMissingJointMessage(attachmentReport.missingRequiredJoints));
-      }
-
+      const result = await this.csvMotionService.loadFromDroppedFiles(
+        fileMap,
+        loadedRobotResult.motionSchema,
+      );
+      this.motionPlayer.attachRobot(loadedRobotResult.robot);
       const bindingReport = this.motionPlayer.loadClip(result.clip);
 
       this.currentMotionClip = result.clip;
@@ -444,7 +426,7 @@ export class AppController {
       this.motionWarnings = [...result.warnings];
       if (bindingReport.missingRootJoint) {
         this.motionWarnings.push(
-          `Joint "${G1_ROOT_JOINT_NAME}" was not found. Root translation/rotation is ignored.`,
+          `Joint "${result.clip.schema.rootJointName}" was not found. Root translation/rotation is ignored.`,
         );
       }
 
@@ -529,7 +511,7 @@ export class AppController {
   private renderReadyState(result: LoadedRobotResult): void {
     const motionDetail = this.currentMotionClip
       ? ` Motion: ${this.currentMotionClip.name} (${this.currentMotionClip.frameCount} frames @ ${this.currentMotionClip.fps} FPS, ${this.isMotionPlaying ? 'playing' : 'paused'}). Drop CSV to replace motion.`
-      : ' Drop CSV to load G1 motion.';
+      : ' Drop CSV to load motion.';
 
     const sourceDetail = this.currentMotionSourcePath
       ? ` Motion source: ${this.currentMotionSourcePath}.`
@@ -599,7 +581,8 @@ export class AppController {
     this.motionFrameSlider.step = '1';
     this.motionFrameSlider.value = String(snapshot.frameIndex);
     this.motionFrameLabel.textContent = `Frame ${snapshot.frameIndex + 1} / ${snapshot.frameCount}`;
-    this.motionName.textContent = `${this.currentMotionClip.name} · ${this.currentMotionClip.fps} FPS · ${G1_CSV_STRIDE} cols (${G1_JOINT_NAMES.length} joints + root)`;
+    const jointCount = this.currentMotionClip.schema.jointNames.length;
+    this.motionName.textContent = `${this.currentMotionClip.name} · ${this.currentMotionClip.fps} FPS · ${this.currentMotionClip.sourceColumnCount} src cols -> ${this.currentMotionClip.stride} mapped cols (${jointCount} joints + root, ${this.currentMotionClip.csvMode})`;
   }
 
   private toggleViewMode(): void {

@@ -19,6 +19,14 @@ Its core purpose is to quickly load robot models in the browser and play motion 
 - Implemented: URDF drag-and-drop loading, basic status panel, basic motion playback controls
 - Typical use case: quick visual validation for local model and motion files
 
+## Robot Support
+
+- Verified support: Unitree `G1`, `H1`, `H1-2`
+- Motion CSV parsing is now URDF-driven (joint mapping is not hardcoded to G1)
+- Supports both CSV modes:
+  - Header-based mapping by joint names
+  - Ordered mapping using URDF non-fixed joint declaration order
+
 ## Data Types (Target Support)
 
 ### Models

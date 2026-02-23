@@ -2,11 +2,10 @@ import { Euler, Quaternion, Vector3 } from 'three';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  G1_CSV_STRIDE,
-  G1_JOINT_NAMES,
-  G1_ROOT_JOINT_NAME,
-} from '../io/motion/G1MotionSchema';
-import type { MotionClip, UrdfRobotLike } from '../types/viewer';
+  DEFAULT_ROOT_COMPONENT_COUNT,
+  DEFAULT_ROOT_JOINT_NAME,
+} from '../io/motion/MotionSchema';
+import type { MotionClip, MotionSchema, UrdfRobotLike } from '../types/viewer';
 import { G1MotionPlayer } from './G1MotionPlayer';
 
 interface CapturedJointCall {
@@ -16,11 +15,19 @@ interface CapturedJointCall {
 
 type RafCallback = (timestamp: number) => void;
 
-function createClip(frameCount: number): MotionClip {
-  const data = new Float32Array(frameCount * G1_CSV_STRIDE);
+const TEST_JOINT_NAMES = ['joint_a', 'joint_b', 'joint_c'];
+const TEST_MOTION_SCHEMA: MotionSchema = {
+  rootJointName: DEFAULT_ROOT_JOINT_NAME,
+  rootComponentCount: DEFAULT_ROOT_COMPONENT_COUNT,
+  jointNames: [...TEST_JOINT_NAMES],
+};
+
+function createClip(frameCount: number, schema: MotionSchema = TEST_MOTION_SCHEMA): MotionClip {
+  const stride = schema.rootComponentCount + schema.jointNames.length;
+  const data = new Float32Array(frameCount * stride);
 
   for (let frame = 0; frame < frameCount; frame += 1) {
-    const base = frame * G1_CSV_STRIDE;
+    const base = frame * stride;
     data[base] = frame + 0.1;
     data[base + 1] = frame + 0.2;
     data[base + 2] = frame + 0.3;
@@ -29,8 +36,8 @@ function createClip(frameCount: number): MotionClip {
     data[base + 5] = 0;
     data[base + 6] = 1;
 
-    for (let jointIndex = 0; jointIndex < G1_JOINT_NAMES.length; jointIndex += 1) {
-      data[base + 7 + jointIndex] = frame * 10 + jointIndex;
+    for (let jointIndex = 0; jointIndex < schema.jointNames.length; jointIndex += 1) {
+      data[base + schema.rootComponentCount + jointIndex] = frame * 10 + jointIndex;
     }
   }
 
@@ -39,13 +46,21 @@ function createClip(frameCount: number): MotionClip {
     sourcePath: 'motions/test.csv',
     fps: 30,
     frameCount,
-    stride: G1_CSV_STRIDE,
+    stride,
+    schema: {
+      rootJointName: schema.rootJointName,
+      rootComponentCount: schema.rootComponentCount,
+      jointNames: [...schema.jointNames],
+    },
+    csvMode: 'ordered',
+    sourceColumnCount: stride,
     data,
   };
 }
 
 function createMockRobot(options: {
   includeRoot?: boolean;
+  rootJointName?: string;
   jointNames?: readonly string[];
   includeTransform?: boolean;
   initialPosition?: any;
@@ -57,13 +72,14 @@ function createMockRobot(options: {
   initialQuaternion: any;
 } {
   const includeRoot = options.includeRoot ?? true;
-  const jointNames = options.jointNames ?? G1_JOINT_NAMES;
+  const rootJointName = options.rootJointName ?? DEFAULT_ROOT_JOINT_NAME;
+  const jointNames = options.jointNames ?? TEST_JOINT_NAMES;
   const includeTransform = options.includeTransform ?? false;
   const calls: CapturedJointCall[] = [];
   const joints: Record<string, {}> = {};
 
   if (includeRoot) {
-    joints[G1_ROOT_JOINT_NAME] = {};
+    joints[rootJointName] = {};
   }
 
   for (const jointName of jointNames) {
@@ -111,9 +127,9 @@ describe('G1MotionPlayer', () => {
     player.seek(100);
 
     expect(frameIndices).toEqual([0, 0, 1]);
-    expect(calls).toHaveLength(30 * 3);
+    expect(calls).toHaveLength((TEST_JOINT_NAMES.length + 1) * 3);
 
-    const rootCalls = calls.filter((call) => call.jointName === G1_ROOT_JOINT_NAME);
+    const rootCalls = calls.filter((call) => call.jointName === DEFAULT_ROOT_JOINT_NAME);
     expect(rootCalls).toHaveLength(3);
     expect(rootCalls[2]?.values[0]).toBeCloseTo(1.1);
     expect(rootCalls[2]?.values[1]).toBeCloseTo(1.2);
@@ -134,7 +150,7 @@ describe('G1MotionPlayer', () => {
     player.attachRobot(robot);
     player.loadClip(clip);
 
-    const rootCalls = calls.filter((call) => call.jointName === G1_ROOT_JOINT_NAME);
+    const rootCalls = calls.filter((call) => call.jointName === DEFAULT_ROOT_JOINT_NAME);
     expect(rootCalls).toHaveLength(1);
     const values = rootCalls[0]?.values ?? [];
     expect(values[3]).toBeCloseTo(expectedEuler.x, 5);
@@ -142,18 +158,19 @@ describe('G1MotionPlayer', () => {
     expect(values[5]).toBeCloseTo(expectedEuler.z, 5);
   });
 
-  it('reports missing joints and missing root based on robot joint map', () => {
+  it('reports missing joints and missing root based on loaded clip schema', () => {
     const { robot } = createMockRobot({
       includeRoot: false,
-      jointNames: G1_JOINT_NAMES.slice(2),
+      jointNames: TEST_JOINT_NAMES.slice(2),
     });
     const player = new G1MotionPlayer();
+    player.attachRobot(robot);
 
-    const report = player.attachRobot(robot);
+    const report = player.loadClip(createClip(1));
 
     expect(report.missingRequiredJoints).toEqual([
-      G1_JOINT_NAMES[0],
-      G1_JOINT_NAMES[1],
+      TEST_JOINT_NAMES[0],
+      TEST_JOINT_NAMES[1],
     ]);
     expect(report.missingRootJoint).toBe(true);
   });
@@ -188,7 +205,7 @@ describe('G1MotionPlayer', () => {
     expect(
       warnings.some((warning) => warning.includes('Root motion is applied to robot transform fallback')),
     ).toBe(true);
-    expect(calls.some((call) => call.jointName === G1_ROOT_JOINT_NAME)).toBe(false);
+    expect(calls.some((call) => call.jointName === DEFAULT_ROOT_JOINT_NAME)).toBe(false);
 
     const robotWithTransform = robot as UrdfRobotLike & {
       position: any;
@@ -291,3 +308,4 @@ describe('G1MotionPlayer', () => {
     expect(pendingCallback).toBeNull();
   });
 });
+

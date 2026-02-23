@@ -1,6 +1,32 @@
-import type { CsvMotionLoadResult, DroppedFileMap, MotionClip } from '../../types/viewer';
+import type {
+  CsvMotionLoadResult,
+  DroppedFileMap,
+  MotionClip,
+  MotionCsvMode,
+  MotionSchema,
+} from '../../types/viewer';
+import {
+  DEFAULT_MOTION_FPS,
+  DEFAULT_ROOT_COMPONENT_COUNT,
+  DEFAULT_ROOT_JOINT_NAME,
+} from './MotionSchema';
 import { getBaseName, getPathDepth, normalizePath } from '../urdf/pathResolver';
-import { G1_CSV_STRIDE, G1_MOTION_FPS } from './G1MotionSchema';
+
+interface ParseStrategy {
+  mode: MotionCsvMode;
+  sourceColumnCount: number;
+  mappedColumnIndices: number[];
+}
+
+const ROOT_HEADER_ALIASES: ReadonlyArray<ReadonlyArray<string>> = [
+  ['root_x', 'x'],
+  ['root_y', 'y'],
+  ['root_z', 'z'],
+  ['root_qx', 'qx'],
+  ['root_qy', 'qy'],
+  ['root_qz', 'qz'],
+  ['root_qw', 'qw'],
+];
 
 function sortCsvPaths(paths: string[]): string[] {
   return [...paths]
@@ -29,6 +55,138 @@ function buildClipName(path: string): string {
   return baseName || 'motion.csv';
 }
 
+function normalizeColumnName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function cloneMotionSchema(motionSchema: MotionSchema): MotionSchema {
+  return {
+    rootJointName: motionSchema.rootJointName || DEFAULT_ROOT_JOINT_NAME,
+    rootComponentCount: motionSchema.rootComponentCount || DEFAULT_ROOT_COMPONENT_COUNT,
+    jointNames: [...motionSchema.jointNames],
+  };
+}
+
+function findHeaderIndex(
+  normalizedHeader: string[],
+  aliases: readonly string[],
+  usedIndices: Set<number>,
+): number {
+  for (const alias of aliases) {
+    const normalizedAlias = normalizeColumnName(alias);
+    for (let index = 0; index < normalizedHeader.length; index += 1) {
+      if (usedIndices.has(index)) {
+        continue;
+      }
+
+      if (normalizedHeader[index] === normalizedAlias) {
+        return index;
+      }
+    }
+  }
+
+  return -1;
+}
+
+function formatMissingJointMessage(missingJointNames: string[]): string {
+  const MAX_DISPLAY = 12;
+  const displayed = missingJointNames.slice(0, MAX_DISPLAY).join(', ');
+  const hiddenCount = Math.max(0, missingJointNames.length - MAX_DISPLAY);
+
+  if (hiddenCount === 0) {
+    return `CSV is incompatible with current URDF. Missing non-fixed joints: ${displayed}.`;
+  }
+
+  return `CSV is incompatible with current URDF. Missing non-fixed joints: ${displayed}, and ${hiddenCount} more.`;
+}
+
+function buildHeaderStrategy(
+  headerTokens: string[],
+  motionSchema: MotionSchema,
+  warnings: Set<string>,
+): ParseStrategy {
+  const normalizedHeader = headerTokens.map((token) => normalizeColumnName(token));
+  const usedIndices = new Set<number>();
+  const mappedColumnIndices: number[] = [];
+
+  for (const aliases of ROOT_HEADER_ALIASES) {
+    const rootIndex = findHeaderIndex(normalizedHeader, aliases, usedIndices);
+    if (rootIndex < 0) {
+      throw new Error(
+        'CSV header is missing required root columns. Expected root_x/root_y/root_z/root_qx/root_qy/root_qz/root_qw (or x/y/z/qx/qy/qz/qw).',
+      );
+    }
+
+    usedIndices.add(rootIndex);
+    mappedColumnIndices.push(rootIndex);
+  }
+
+  const missingJointNames: string[] = [];
+  for (const jointName of motionSchema.jointNames) {
+    const jointIndex = findHeaderIndex(
+      normalizedHeader,
+      [normalizeColumnName(jointName)],
+      usedIndices,
+    );
+    if (jointIndex < 0) {
+      missingJointNames.push(jointName);
+      continue;
+    }
+
+    usedIndices.add(jointIndex);
+    mappedColumnIndices.push(jointIndex);
+  }
+
+  if (missingJointNames.length > 0) {
+    throw new Error(formatMissingJointMessage(missingJointNames));
+  }
+
+  const unmappedColumns: string[] = [];
+  for (let index = 0; index < headerTokens.length; index += 1) {
+    if (!usedIndices.has(index)) {
+      unmappedColumns.push(headerTokens[index] || `col_${index + 1}`);
+    }
+  }
+
+  if (unmappedColumns.length > 0) {
+    warnings.add(
+      `CSV contains ${unmappedColumns.length} unmapped columns and they were ignored: ${unmappedColumns.join(', ')}.`,
+    );
+  }
+
+  return {
+    mode: 'header',
+    sourceColumnCount: headerTokens.length,
+    mappedColumnIndices,
+  };
+}
+
+function buildOrderedStrategy(
+  firstDataRowTokens: string[],
+  motionSchema: MotionSchema,
+  warnings: Set<string>,
+): ParseStrategy {
+  const expectedStride = motionSchema.rootComponentCount + motionSchema.jointNames.length;
+  const columnCount = firstDataRowTokens.length;
+  if (columnCount < expectedStride) {
+    throw new Error(
+      `CSV has ${columnCount} columns, expected at least ${expectedStride} (${motionSchema.rootComponentCount} root + ${motionSchema.jointNames.length} non-fixed joints).`,
+    );
+  }
+
+  if (columnCount > expectedStride) {
+    warnings.add(
+      `CSV has ${columnCount - expectedStride} extra joint columns; ignored tail columns.`,
+    );
+  }
+
+  return {
+    mode: 'ordered',
+    sourceColumnCount: columnCount,
+    mappedColumnIndices: Array.from({ length: expectedStride }, (_, index) => index),
+  };
+}
+
 export class CsvMotionService {
   getAvailableCsvPaths(fileMap: DroppedFileMap): string[] {
     return sortCsvPaths(
@@ -38,6 +196,7 @@ export class CsvMotionService {
 
   async loadFromDroppedFiles(
     fileMap: DroppedFileMap,
+    motionSchema: MotionSchema,
     preferredCsvPath?: string,
   ): Promise<CsvMotionLoadResult> {
     const csvPaths = this.getAvailableCsvPaths(fileMap);
@@ -71,7 +230,7 @@ export class CsvMotionService {
     }
 
     const csvContent = await selectedFile.text();
-    const parsed = parseMotionCsv(csvContent, selectedCsvPath);
+    const parsed = parseMotionCsv(csvContent, selectedCsvPath, motionSchema);
     for (const warning of parsed.warnings) {
       warnings.add(warning);
     }
@@ -89,12 +248,18 @@ export interface ParseMotionCsvResult {
   warnings: string[];
 }
 
-export function parseMotionCsv(content: string, sourcePath: string): ParseMotionCsvResult {
+export function parseMotionCsv(
+  content: string,
+  sourcePath: string,
+  motionSchema: MotionSchema,
+): ParseMotionCsvResult {
+  const schema = cloneMotionSchema(motionSchema);
   const lines = content.split(/\r?\n/);
   const values: number[] = [];
   const warnings = new Set<string>();
   let rowCount = 0;
-  let firstDataRowSeen = false;
+  let parseStrategy: ParseStrategy | null = null;
+  let hasAnyContent = false;
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const rawLine = lines[lineIndex];
@@ -102,29 +267,33 @@ export function parseMotionCsv(content: string, sourcePath: string): ParseMotion
       continue;
     }
 
+    hasAnyContent = true;
     const tokens = parseCsvLine(rawLine);
     const lineNumber = lineIndex + 1;
 
-    if (!firstDataRowSeen) {
-      firstDataRowSeen = true;
+    if (!parseStrategy) {
       if (isHeaderRow(tokens)) {
+        parseStrategy = buildHeaderStrategy(tokens, schema, warnings);
         warnings.add(`Detected CSV header row at line ${lineNumber} and skipped it.`);
         continue;
       }
+
+      parseStrategy = buildOrderedStrategy(tokens, schema, warnings);
     }
 
-    if (tokens.length !== G1_CSV_STRIDE) {
+    if (tokens.length !== parseStrategy.sourceColumnCount) {
       throw new Error(
-        `CSV row ${lineNumber} has ${tokens.length} columns, expected ${G1_CSV_STRIDE}.`,
+        `CSV row ${lineNumber} has ${tokens.length} columns, expected ${parseStrategy.sourceColumnCount}.`,
       );
     }
 
-    for (let columnIndex = 0; columnIndex < tokens.length; columnIndex += 1) {
-      const token = tokens[columnIndex];
+    for (let columnIndex = 0; columnIndex < parseStrategy.mappedColumnIndices.length; columnIndex += 1) {
+      const sourceColumnIndex = parseStrategy.mappedColumnIndices[columnIndex];
+      const token = tokens[sourceColumnIndex];
       const value = Number(token);
       if (!Number.isFinite(value)) {
         throw new Error(
-          `CSV row ${lineNumber}, col ${columnIndex + 1} is not a valid number: "${token}".`,
+          `CSV row ${lineNumber}, col ${sourceColumnIndex + 1} is not a valid number: "${token}".`,
         );
       }
 
@@ -134,20 +303,23 @@ export function parseMotionCsv(content: string, sourcePath: string): ParseMotion
     rowCount += 1;
   }
 
-  if (!firstDataRowSeen) {
+  if (!hasAnyContent) {
     throw new Error('CSV is empty.');
   }
 
-  if (rowCount === 0) {
+  if (!parseStrategy || rowCount === 0) {
     throw new Error('CSV does not contain motion frames.');
   }
 
   const clip: MotionClip = {
     name: buildClipName(sourcePath),
     sourcePath: normalizePath(sourcePath),
-    fps: G1_MOTION_FPS,
+    fps: DEFAULT_MOTION_FPS,
     frameCount: rowCount,
-    stride: G1_CSV_STRIDE,
+    stride: parseStrategy.mappedColumnIndices.length,
+    schema,
+    csvMode: parseStrategy.mode,
+    sourceColumnCount: parseStrategy.sourceColumnCount,
     data: new Float32Array(values),
   };
 
@@ -156,3 +328,4 @@ export function parseMotionCsv(content: string, sourcePath: string): ParseMotion
     warnings: [...warnings],
   };
 }
+

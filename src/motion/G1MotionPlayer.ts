@@ -1,6 +1,6 @@
 import { Euler, Quaternion, Vector3 } from 'three';
 
-import { G1_JOINT_NAMES, G1_JOINT_VALUE_OFFSET, G1_ROOT_JOINT_NAME } from '../io/motion/G1MotionSchema';
+import { DEFAULT_ROOT_COMPONENT_COUNT, DEFAULT_ROOT_JOINT_NAME } from '../io/motion/MotionSchema';
 import type { MotionClip, UrdfRobotLike } from '../types/viewer';
 
 type RequestFrameFn = (callback: FrameRequestCallback) => number;
@@ -79,8 +79,8 @@ export class G1MotionPlayer {
     | null = null;
   private jointSetters: Array<((value: number) => void) | null> = [];
   private bindingReport: MotionBindingReport = {
-    missingRequiredJoints: [...G1_JOINT_NAMES],
-    missingRootJoint: true,
+    missingRequiredJoints: [],
+    missingRootJoint: false,
   };
   private currentFrame = 0;
   private isPlaying = false;
@@ -243,16 +243,23 @@ export class G1MotionPlayer {
     this.rootTransformFallback = null;
     this.jointSetters = [];
 
+    const schema = this.clip?.schema ?? null;
+    if (!schema) {
+      return {
+        missingRequiredJoints: [],
+        missingRootJoint: false,
+      };
+    }
+
     if (!this.robot) {
       return {
-        missingRequiredJoints: [...G1_JOINT_NAMES],
+        missingRequiredJoints: [...schema.jointNames],
         missingRootJoint: true,
       };
     }
 
     const missingRequired: string[] = [];
-
-    for (const jointName of G1_JOINT_NAMES) {
+    for (const jointName of schema.jointNames) {
       const setter = this.createJointSetter(jointName);
       if (!setter) {
         missingRequired.push(jointName);
@@ -261,10 +268,12 @@ export class G1MotionPlayer {
       this.jointSetters.push(setter);
     }
 
-    this.rootSetter = this.createRootSetter();
+    const rootJointName = schema.rootJointName || DEFAULT_ROOT_JOINT_NAME;
+    this.rootSetter = this.createRootSetter(rootJointName);
     if (!this.rootSetter) {
       this.rootTransformFallback = this.createRootTransformFallback();
     }
+
     const report: MotionBindingReport = {
       missingRequiredJoints: missingRequired,
       missingRootJoint: !this.rootSetter && !this.rootTransformFallback,
@@ -272,13 +281,13 @@ export class G1MotionPlayer {
 
     if (!report.missingRootJoint && !this.rootSetter && this.rootTransformFallback && this.clip) {
       this.onWarning?.(
-        `Joint "${G1_ROOT_JOINT_NAME}" was not found. Root motion is applied to robot transform fallback.`,
+        `Joint "${rootJointName}" was not found. Root motion is applied to robot transform fallback.`,
       );
     }
 
     if (report.missingRootJoint && this.clip) {
       this.onWarning?.(
-        `Joint "${G1_ROOT_JOINT_NAME}" was not found. Root translation/rotation is ignored.`,
+        `Joint "${rootJointName}" was not found. Root translation/rotation is ignored.`,
       );
     }
 
@@ -310,21 +319,21 @@ export class G1MotionPlayer {
     };
   }
 
-  private createRootSetter():
-    | ((x: number, y: number, z: number, roll: number, pitch: number, yaw: number) => void)
-    | null {
+  private createRootSetter(
+    rootJointName: string,
+  ): ((x: number, y: number, z: number, roll: number, pitch: number, yaw: number) => void) | null {
     if (!this.robot) {
       return null;
     }
 
-    const rootJoint = this.robot.joints?.[G1_ROOT_JOINT_NAME];
+    const rootJoint = this.robot.joints?.[rootJointName];
     if (this.robot.joints && !rootJoint) {
       return null;
     }
 
     if (typeof this.robot.setJointValue === 'function') {
       return (x, y, z, roll, pitch, yaw) => {
-        this.robot?.setJointValue?.(G1_ROOT_JOINT_NAME, x, y, z, roll, pitch, yaw);
+        this.robot?.setJointValue?.(rootJointName, x, y, z, roll, pitch, yaw);
       };
     }
 
@@ -411,6 +420,8 @@ export class G1MotionPlayer {
       return;
     }
 
+    const schema = this.clip.schema;
+    const rootComponentCount = schema.rootComponentCount || DEFAULT_ROOT_COMPONENT_COUNT;
     const frame = this.clampFrame(frameIndex);
     const base = frame * this.clip.stride;
     const data = this.clip.data;
@@ -476,7 +487,7 @@ export class G1MotionPlayer {
         continue;
       }
 
-      setter(data[base + G1_JOINT_VALUE_OFFSET + jointIndex]);
+      setter(data[base + rootComponentCount + jointIndex]);
     }
 
     this.currentFrame = frame;
@@ -488,3 +499,4 @@ export class G1MotionPlayer {
     });
   }
 }
+

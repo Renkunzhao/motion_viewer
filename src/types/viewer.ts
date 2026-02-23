@@ -22,6 +22,7 @@ export interface LoadResult {
   linkCount: number;
   jointCount: number;
   selectedUrdfPath: string;
+  motionSchema: MotionSchema;
   warnings: string[];
 }
 
@@ -29,12 +30,23 @@ export interface LoadedRobotResult extends LoadResult {
   robot: UrdfRobotLike;
 }
 
+export interface MotionSchema {
+  rootJointName: string;
+  rootComponentCount: number;
+  jointNames: string[];
+}
+
+export type MotionCsvMode = 'header' | 'ordered';
+
 export interface MotionClip {
   name: string;
   sourcePath: string;
   fps: number;
   frameCount: number;
   stride: number;
+  schema: MotionSchema;
+  csvMode: MotionCsvMode;
+  sourceColumnCount: number;
   data: Float32Array;
 }
 

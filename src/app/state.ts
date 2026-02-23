@@ -31,7 +31,7 @@ const STATE_COPY: Record<ViewerState, StateCopy> = {
     chip: 'Ready',
     title: 'Robot Loaded',
     detail:
-      'Drop another model to replace robot, or drop a G1 CSV motion file to play animation.',
+      'Drop another model to replace robot, or drop a motion CSV file to play animation.',
     dropHint: 'Drop URDF to replace robot, or drop CSV to load motion.',
   },
   error: {
