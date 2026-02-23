@@ -11,9 +11,9 @@ const STATE_COPY: Record<ViewerState, StateCopy> = {
   idle: {
     chip: 'Idle',
     title: 'Motion Viewer',
-    detail: 'Drag and drop to load URDF / CSV / BVH.',
+    detail: 'Use preset dropdown or drag and drop to load URDF / CSV / BVH.',
     dropHint:
-      'Supported: URDF (.urdf), CSV (.csv), BVH (.bvh). Drag files/folders or use Select Folder / Select Files. Space: play/pause, R: reset, Tab: switch view.',
+      'Supported: URDF (.urdf), CSV (.csv), BVH (.bvh). Use preset dropdown, drag files/folders, or use Select Folder / Select Files. Space: play/pause, R: reset, Tab: switch view.',
   },
   drag_over: {
     chip: 'Drop',
@@ -31,8 +31,8 @@ const STATE_COPY: Record<ViewerState, StateCopy> = {
     chip: 'Ready',
     title: 'Viewer Ready',
     detail:
-      'Drop another model to replace robot, or drop CSV/BVH motion to play animation.',
-    dropHint: 'Drop URDF/CSV/BVH to update current view.',
+      'Select preset, drop another model to replace robot, or drop CSV/BVH motion to play animation.',
+    dropHint: 'Use preset dropdown or drop URDF/CSV/BVH to update current view.',
   },
   error: {
     chip: 'Error',

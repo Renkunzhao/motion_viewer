@@ -16,11 +16,12 @@ Its core purpose is to quickly load robot models in the browser and play motion 
 ## Current Scope
 
 - Stack: Vite + TypeScript + Three.js + urdf-loader
-- Implemented: URDF drag-and-drop loading, CSV motion playback, BVH drag-and-drop playback, basic status panel, and playback controls
+- Implemented: preset dropdown loading, URDF drag-and-drop loading, CSV motion playback, BVH drag-and-drop playback, basic status panel, and playback controls
 - Typical use case: quick visual validation for local model and motion files
 
 ## Supported Input And Operations
 
+- Presets (bundled static assets): choose from dropdown and click `Load Preset`, no local file selection required
 - URDF (.urdf): drag and drop folder/multi-file set, or use Select Folder/Select Files
 - CSV (.csv): requires URDF loaded first; if URDF is missing, center panel shows guidance
 - Dropping CSV while only BVH is loaded shows temporary warning, then auto-returns to ready layout
@@ -30,6 +31,31 @@ Its core purpose is to quickly load robot models in the browser and play motion 
 - Unsupported drops can trigger a temporary red warning panel, then return to ready layout while keeping the last warning in the lower-left hint
 - Controls: `Space` play/pause, `R` reset to frame 1, `Tab` switch view mode, slider seek
 - CSV playback FPS is editable in the Motion panel via the `FPS` input box (takes effect immediately)
+
+## Static Preset Deployment
+
+The viewer can ship built-in model/motion assets for static hosting (GitHub Pages, nginx, etc.).
+Visitors can open the site and load presets directly from the dropdown without cloning the repo.
+
+- Preset manifest: `public/presets/presets.json`
+- Bundled preset assets: `public/presets/robots/*` and `public/presets/motions/*`
+
+Each preset can define:
+
+- `model` (recommended): `urdfPath` only, e.g. `presets/robots/g1/g1_29dof_rev_1_0.urdf`
+- `motion` (recommended): `kind: "csv" | "bvh"` + `path`
+- Legacy format is still supported:
+  - `model.files[]` with optional `selectedUrdfPath`
+  - `motion.files[]` with optional `selectedMotionPath`
+
+Notes:
+
+- `model.urdfPath` mode no longer requires listing every mesh file in `presets.json`; mesh resources are resolved by URL relative to the URDF location.
+- This is better for large robot assets copied directly into `public/presets/robots/*`.
+
+After editing presets/assets, rebuild and redeploy static files:
+
+- `npm run build`
 
 ## Robot Support
 

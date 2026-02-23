@@ -20,13 +20,23 @@
           <p class="drop-overlay__eyebrow">Motion Viewer</p>
           <h1>Motion Viewer</h1>
           <p id="drop-hint" class="drop-overlay__hint">
-            Supported: URDF (.urdf), CSV (.csv), BVH (.bvh). Drag files/folders or use Select
-            Folder / Select Files. Space: play/pause, R: reset, Tab: switch view.
+            Supported: URDF (.urdf), CSV (.csv), BVH (.bvh). Use preset dropdown, drag
+            files/folders, or click Select Folder / Select Files. Space: play/pause, R: reset, Tab:
+            switch view.
           </p>
           <div class="drop-overlay__actions">
             <button id="pick-folder-btn" type="button">Select Folder</button>
             <button id="pick-files-btn" type="button">Select Files</button>
             <button id="reset-btn" type="button" class="ghost">Reset</button>
+          </div>
+          <div class="preset-picker">
+            <label for="preset-select" class="preset-picker__label">Presets</label>
+            <div class="preset-picker__row">
+              <select id="preset-select" class="preset-picker__select">
+                <option value="">Loading presets...</option>
+              </select>
+              <button id="preset-load-btn" type="button" class="ghost">Load Preset</button>
+            </div>
           </div>
         </div>
       </div>

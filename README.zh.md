@@ -16,11 +16,12 @@
 ## 当前范围
 
 - 技术栈：Vite + TypeScript + Three.js + urdf-loader
-- 已实现：URDF 拖拽加载、CSV 动作播放、BVH 拖拽播放、基础状态面板与播放控制
+- 已实现：预置下拉加载、URDF 拖拽加载、CSV 动作播放、BVH 拖拽播放、基础状态面板与播放控制
 - 典型场景：本地模型与动作文件的快速可视化验证
 
 ## 支持的输入与操作
 
+- 预置（静态内置资源）：在下拉框选择并点击 `Load Preset`，无需本地选文件
 - URDF (.urdf)：支持拖拽文件夹/多文件集合，或使用 Select Folder / Select Files
 - CSV (.csv)：需先加载 URDF；若未加载 URDF，会在中心面板给出引导提示
 - 仅加载 BVH 时若拖入 CSV，会短暂告警并自动回到 ready 布局
@@ -30,6 +31,30 @@
 - 拖入不支持文件时会短暂显示红色告警面板，随后自动回到 ready 布局，并在左下角保留上一条告警提示
 - 操作：`Space` 播放/暂停，`R` 重置到第 1 帧，`Tab` 切换视角模式，滑块可拖动定位帧
 - CSV 播放频率可在 Motion 面板的 `FPS` 输入框中直接修改（即时生效）
+
+## 静态站点预置部署
+
+查看器支持把模型/动作作为静态资源随网站一起发布（如 GitHub Pages、nginx）。
+访问者打开网页后，可直接通过下拉框加载预置，无需 clone 仓库或本地运行。
+
+- 预置清单：`public/presets/presets.json`
+- 预置资源目录：`public/presets/robots/*` 与 `public/presets/motions/*`
+
+每个 preset 可包含：
+
+- `model`（推荐）：仅配置 `urdfPath`，例如 `presets/robots/g1/g1_29dof_rev_1_0.urdf`
+- `motion`（推荐）：配置 `kind: "csv" | "bvh"` 与 `path`
+- 旧格式仍兼容：`model.files[]`（可选 `selectedUrdfPath`）
+- 旧格式仍兼容：`motion.files[]`（可选 `selectedMotionPath`）
+
+说明：
+
+- 使用 `model.urdfPath` 时，不再需要在 `presets.json` 里手工列出所有 mesh 文件。
+- mesh 资源会按 URDF 所在路径做 URL 相对解析，更适合把大体积机器人资源直接放进 `public/presets/robots/*`。
+
+修改预置后，重新构建并部署静态文件：
+
+- `npm run build`
 
 ## 机器人支持
 

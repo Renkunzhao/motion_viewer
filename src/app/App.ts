@@ -9,6 +9,7 @@ import { dataTransferToFileMap, fileListToFileMap } from '../io/drop/dataTransfe
 import { registerDropHandlers } from '../io/drop/registerDropHandlers';
 import { BvhMotionService } from '../io/motion/BvhMotionService';
 import { CsvMotionService } from '../io/motion/CsvMotionService';
+import { getBaseName, normalizePath } from '../io/urdf/pathResolver';
 import { UrdfLoadService } from '../io/urdf/UrdfLoadService';
 import { BvhMotionPlayer } from '../motion/BvhMotionPlayer';
 import { G1MotionPlayer, type MotionFrameSnapshot } from '../motion/G1MotionPlayer';
@@ -22,6 +23,219 @@ function requireElement<T extends HTMLElement>(id: string): T {
   }
 
   return element as T;
+}
+
+interface PresetAssetFile {
+  path: string;
+  mapAs: string;
+}
+
+interface PresetModelDefinition {
+  files?: PresetAssetFile[];
+  urdfPath?: string;
+  selectedUrdfPath?: string;
+}
+
+interface PresetMotionDefinition {
+  kind: 'csv' | 'bvh';
+  files?: PresetAssetFile[];
+  path?: string;
+  selectedMotionPath?: string;
+}
+
+interface ViewerPresetDefinition {
+  id: string;
+  label: string;
+  description?: string;
+  model?: PresetModelDefinition;
+  motion?: PresetMotionDefinition;
+}
+
+interface ViewerPresetManifest {
+  presets: ViewerPresetDefinition[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function parseNonEmptyString(value: unknown, context: string): string {
+  if (typeof value !== 'string') {
+    throw new Error(`${context} must be a string.`);
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(`${context} cannot be empty.`);
+  }
+
+  return trimmed;
+}
+
+function normalizePresetFetchPath(rawPath: string): string {
+  return rawPath.trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+}
+
+function normalizePresetMapPath(rawPath: string): string {
+  const normalized = normalizePath(rawPath);
+  if (normalized) {
+    return normalized;
+  }
+
+  const baseName = getBaseName(rawPath);
+  if (baseName) {
+    return baseName;
+  }
+
+  throw new Error(`Invalid preset file path: ${rawPath}`);
+}
+
+function parsePresetAssetFile(value: unknown, context: string): PresetAssetFile {
+  if (typeof value === 'string') {
+    const path = normalizePresetFetchPath(parseNonEmptyString(value, `${context}.path`));
+    if (!path) {
+      throw new Error(`${context}.path cannot be empty.`);
+    }
+
+    return {
+      path,
+      mapAs: normalizePresetMapPath(path),
+    };
+  }
+
+  if (!isRecord(value)) {
+    throw new Error(`${context} must be a string or object.`);
+  }
+
+  const path = normalizePresetFetchPath(parseNonEmptyString(value.path, `${context}.path`));
+  if (!path) {
+    throw new Error(`${context}.path cannot be empty.`);
+  }
+
+  const rawMapPath = typeof value.mapAs === 'string' ? value.mapAs : path;
+  return {
+    path,
+    mapAs: normalizePresetMapPath(rawMapPath),
+  };
+}
+
+function parsePresetAssetFiles(value: unknown, context: string): PresetAssetFile[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`${context} must be a non-empty array.`);
+  }
+
+  return value.map((item, index) => parsePresetAssetFile(item, `${context}[${index}]`));
+}
+
+function parseOptionalPresetAssetFiles(value: unknown, context: string): PresetAssetFile[] | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  return parsePresetAssetFiles(value, context);
+}
+
+function parseOptionalNormalizedPath(value: unknown, context: string): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  const rawPath = parseNonEmptyString(value, context);
+  const normalized = normalizePath(rawPath);
+  if (!normalized) {
+    throw new Error(`${context} is invalid.`);
+  }
+
+  return normalized;
+}
+
+function parsePresetManifest(value: unknown): ViewerPresetManifest {
+  if (!isRecord(value) || !Array.isArray(value.presets)) {
+    throw new Error('Preset manifest must contain a presets array.');
+  }
+
+  const presets = value.presets.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`presets[${index}] must be an object.`);
+    }
+
+    const id = parseNonEmptyString(item.id, `presets[${index}].id`);
+    const label = parseNonEmptyString(item.label, `presets[${index}].label`);
+    const description =
+      item.description === undefined
+        ? undefined
+        : parseNonEmptyString(item.description, `presets[${index}].description`);
+
+    let model: PresetModelDefinition | undefined;
+    if (item.model !== undefined) {
+      if (!isRecord(item.model)) {
+        throw new Error(`presets[${index}].model must be an object.`);
+      }
+
+      model = {
+        files: parseOptionalPresetAssetFiles(item.model.files, `presets[${index}].model.files`),
+        urdfPath: parseOptionalNormalizedPath(
+          item.model.urdfPath,
+          `presets[${index}].model.urdfPath`,
+        ),
+        selectedUrdfPath: parseOptionalNormalizedPath(
+          item.model.selectedUrdfPath,
+          `presets[${index}].model.selectedUrdfPath`,
+        ),
+      };
+
+      if ((!model.files || model.files.length === 0) && !model.urdfPath) {
+        throw new Error(
+          `presets[${index}].model must include either files[] or urdfPath.`,
+        );
+      }
+    }
+
+    let motion: PresetMotionDefinition | undefined;
+    if (item.motion !== undefined) {
+      if (!isRecord(item.motion)) {
+        throw new Error(`presets[${index}].motion must be an object.`);
+      }
+
+      const kind = parseNonEmptyString(item.motion.kind, `presets[${index}].motion.kind`).toLowerCase();
+      if (kind !== 'csv' && kind !== 'bvh') {
+        throw new Error(`presets[${index}].motion.kind must be "csv" or "bvh".`);
+      }
+
+      motion = {
+        kind,
+        files: parseOptionalPresetAssetFiles(item.motion.files, `presets[${index}].motion.files`),
+        path: parseOptionalNormalizedPath(
+          item.motion.path,
+          `presets[${index}].motion.path`,
+        ),
+        selectedMotionPath: parseOptionalNormalizedPath(
+          item.motion.selectedMotionPath,
+          `presets[${index}].motion.selectedMotionPath`,
+        ),
+      };
+
+      if ((!motion.files || motion.files.length === 0) && !motion.path) {
+        throw new Error(
+          `presets[${index}].motion must include either files[] or path.`,
+        );
+      }
+    }
+
+    if (!model && !motion) {
+      throw new Error(`presets[${index}] must include model and/or motion.`);
+    }
+
+    return {
+      id,
+      label,
+      description,
+      model,
+      motion,
+    };
+  });
+
+  return { presets };
 }
 
 export class AppController {
@@ -55,6 +269,8 @@ export class AppController {
   private readonly pickFolderButton: HTMLButtonElement;
   private readonly pickFilesButton: HTMLButtonElement;
   private readonly resetButton: HTMLButtonElement;
+  private readonly presetSelect: HTMLSelectElement;
+  private readonly presetLoadButton: HTMLButtonElement;
   private readonly removeDropHandlers: () => void;
   private viewerState: ViewerState = 'idle';
   private titleOverride: string | null = null;
@@ -86,6 +302,8 @@ export class AppController {
   private viewMode: ViewMode = 'free';
   private recoverReadyTimer: number | null = null;
   private recoverableDropHint: string | null = null;
+  private presetManifest: ViewerPresetManifest | null = null;
+  private isPresetLoading = false;
 
   private readonly onWindowResize = (): void => {
     this.sceneController.resize();
@@ -147,6 +365,25 @@ export class AppController {
 
   private readonly onResetClick = (): void => {
     this.resetViewer();
+  };
+
+  private readonly onPresetSelectChange = (): void => {
+    this.syncPresetControls();
+    const presetId = this.presetSelect.value;
+    if (!presetId || this.isPresetLoading) {
+      return;
+    }
+
+    void this.loadPresetById(presetId);
+  };
+
+  private readonly onPresetLoadClick = (): void => {
+    const presetId = this.presetSelect.value;
+    if (!presetId || this.isPresetLoading) {
+      return;
+    }
+
+    void this.loadPresetById(presetId);
   };
 
   private readonly onShowVisualClick = (): void => {
@@ -253,6 +490,8 @@ export class AppController {
     this.pickFolderButton = requireElement<HTMLButtonElement>('pick-folder-btn');
     this.pickFilesButton = requireElement<HTMLButtonElement>('pick-files-btn');
     this.resetButton = requireElement<HTMLButtonElement>('reset-btn');
+    this.presetSelect = requireElement<HTMLSelectElement>('preset-select');
+    this.presetLoadButton = requireElement<HTMLButtonElement>('preset-load-btn');
 
     this.sceneController = new SceneController(canvas);
     this.sceneController.setModelUpAxis('+Z');
@@ -326,6 +565,8 @@ export class AppController {
     this.pickFolderButton.addEventListener('click', this.onPickFolderClick);
     this.pickFilesButton.addEventListener('click', this.onPickFilesClick);
     this.resetButton.addEventListener('click', this.onResetClick);
+    this.presetSelect.addEventListener('change', this.onPresetSelectChange);
+    this.presetLoadButton.addEventListener('click', this.onPresetLoadClick);
     this.showVisualButton.addEventListener('click', this.onShowVisualClick);
     this.showCollisionButton.addEventListener('click', this.onShowCollisionClick);
     this.urdfList.addEventListener('click', this.onUrdfListClick);
@@ -338,7 +579,9 @@ export class AppController {
     this.syncVisibilityButtons();
     this.syncMotionControls();
     this.syncShortcutPanel();
+    this.syncPresetControls();
     this.renderState();
+    void this.initializePresetManifest();
   }
 
   async handleDrop(dataTransfer: DataTransfer): Promise<void> {
@@ -373,6 +616,8 @@ export class AppController {
     this.pickFolderButton.removeEventListener('click', this.onPickFolderClick);
     this.pickFilesButton.removeEventListener('click', this.onPickFilesClick);
     this.resetButton.removeEventListener('click', this.onResetClick);
+    this.presetSelect.removeEventListener('change', this.onPresetSelectChange);
+    this.presetLoadButton.removeEventListener('click', this.onPresetLoadClick);
     this.showVisualButton.removeEventListener('click', this.onShowVisualClick);
     this.showCollisionButton.removeEventListener('click', this.onShowCollisionClick);
     this.urdfList.removeEventListener('click', this.onUrdfListClick);
@@ -445,10 +690,6 @@ export class AppController {
   }
 
   private async loadSelectedUrdf(urdfPath: string): Promise<void> {
-    if (!this.droppedFileMap) {
-      return;
-    }
-
     this.lastLoadResult = null;
     this.sceneWarning = null;
     this.sceneController.setModelUpAxis('+Z');
@@ -461,7 +702,9 @@ export class AppController {
     });
 
     try {
-      const result = await this.urdfLoadService.loadFromDroppedFiles(this.droppedFileMap, urdfPath);
+      const result = this.droppedFileMap
+        ? await this.urdfLoadService.loadFromDroppedFiles(this.droppedFileMap, urdfPath)
+        : await this.urdfLoadService.loadFromPresetUrl(urdfPath);
       this.sceneController.setRobot(result.robot);
       this.sceneController.setGeometryVisibility(this.showVisual, this.showCollision);
       this.motionPlayer.attachRobot(result.robot);
@@ -479,7 +722,10 @@ export class AppController {
     }
   }
 
-  private async loadMotionFromDroppedFiles(fileMap: DroppedFileMap): Promise<void> {
+  private async loadMotionFromDroppedFiles(
+    fileMap: DroppedFileMap,
+    preferredCsvPath?: string,
+  ): Promise<void> {
     const loadedRobotResult = this.lastLoadResult;
     if (!loadedRobotResult) {
       this.showRecoverableDropError(
@@ -498,6 +744,7 @@ export class AppController {
       const result = await this.csvMotionService.loadFromDroppedFiles(
         fileMap,
         loadedRobotResult.motionSchema,
+        preferredCsvPath,
       );
       this.bvhMotionPlayer.load(null, null);
       this.motionPlayer.attachRobot(loadedRobotResult.robot);
@@ -533,13 +780,16 @@ export class AppController {
     }
   }
 
-  private async loadBvhMotionFromDroppedFiles(fileMap: DroppedFileMap): Promise<void> {
+  private async loadBvhMotionFromDroppedFiles(
+    fileMap: DroppedFileMap,
+    preferredBvhPath?: string,
+  ): Promise<void> {
     this.setState('loading', {
       detail: 'Loading motion BVH ...',
     });
 
     try {
-      const result = await this.bvhMotionService.loadFromDroppedFiles(fileMap);
+      const result = await this.bvhMotionService.loadFromDroppedFiles(fileMap, preferredBvhPath);
 
       this.lastLoadResult = null;
       this.sceneWarning = null;
@@ -938,6 +1188,236 @@ export class AppController {
   private syncShortcutPanel(): void {
     this.shortcutViewModeValue.textContent =
       this.viewMode === 'root_lock' ? 'View: Root Lock' : 'View: Free';
+  }
+
+  private resolvePresetAssetUrl(path: string): string {
+    const relativePath = normalizePresetFetchPath(path);
+    return new URL(relativePath, document.baseURI).toString();
+  }
+
+  private renderPresetOptions(): void {
+    const previousValue = this.presetSelect.value;
+    const presets = this.presetManifest?.presets ?? [];
+    const hasPresets = presets.length > 0;
+
+    this.presetSelect.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = hasPresets ? 'Select a preset...' : 'No bundled presets';
+    this.presetSelect.appendChild(placeholder);
+
+    for (const preset of presets) {
+      const option = document.createElement('option');
+      option.value = preset.id;
+      option.textContent = preset.label;
+      option.title = preset.description || preset.label;
+      this.presetSelect.appendChild(option);
+    }
+
+    if (hasPresets && presets.some((preset) => preset.id === previousValue)) {
+      this.presetSelect.value = previousValue;
+    } else {
+      this.presetSelect.value = '';
+    }
+  }
+
+  private syncPresetControls(): void {
+    const presets = this.presetManifest?.presets ?? [];
+    const hasPresets = presets.length > 0;
+    const hasSelection = this.presetSelect.value.trim().length > 0;
+
+    this.presetSelect.disabled = this.isPresetLoading || !hasPresets;
+    this.presetLoadButton.disabled = this.isPresetLoading || !hasSelection;
+    this.presetLoadButton.textContent = this.isPresetLoading ? 'Loading...' : 'Load Preset';
+  }
+
+  private async initializePresetManifest(): Promise<void> {
+    this.presetManifest = null;
+    this.renderPresetOptions();
+    this.syncPresetControls();
+
+    try {
+      const response = await fetch(this.resolvePresetAssetUrl('presets/presets.json'), {
+        cache: 'no-cache',
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} while loading presets/presets.json.`);
+      }
+
+      const rawManifest = (await response.json()) as unknown;
+      this.presetManifest = parsePresetManifest(rawManifest);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`Preset catalog unavailable: ${reason}`);
+      this.presetManifest = { presets: [] };
+    }
+
+    this.renderPresetOptions();
+    this.syncPresetControls();
+  }
+
+  private getPresetById(presetId: string): ViewerPresetDefinition | null {
+    const presets = this.presetManifest?.presets ?? [];
+    return presets.find((preset) => preset.id === presetId) ?? null;
+  }
+
+  private async fetchPresetFileMap(files: PresetAssetFile[]): Promise<DroppedFileMap> {
+    const fileMap: DroppedFileMap = new Map();
+
+    for (const fileDef of files) {
+      if (fileMap.has(fileDef.mapAs)) {
+        throw new Error(`Duplicate preset file key detected: ${fileDef.mapAs}`);
+      }
+
+      const response = await fetch(this.resolvePresetAssetUrl(fileDef.path), {
+        cache: 'no-cache',
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to fetch preset file ${fileDef.path}: HTTP ${response.status}.`);
+      }
+
+      const blob = await response.blob();
+      const fileName = getBaseName(fileDef.mapAs) || getBaseName(fileDef.path) || 'asset.bin';
+      const file = new File([blob], fileName, { type: blob.type });
+      fileMap.set(fileDef.mapAs, file);
+    }
+
+    return fileMap;
+  }
+
+  private buildSinglePresetFile(path: string): PresetAssetFile {
+    const normalizedPath = normalizePresetFetchPath(path);
+    if (!normalizedPath) {
+      throw new Error(`Invalid preset path: ${path}`);
+    }
+
+    return {
+      path: normalizedPath,
+      mapAs: normalizePresetMapPath(normalizedPath),
+    };
+  }
+
+  private async loadPresetById(presetId: string): Promise<void> {
+    const preset = this.getPresetById(presetId);
+    if (!preset) {
+      this.setState('error', {
+        title: 'Preset Not Found',
+        detail: `Preset "${presetId}" was not found in catalog.`,
+      });
+      return;
+    }
+
+    if (this.isPresetLoading) {
+      return;
+    }
+
+    this.isPresetLoading = true;
+    this.syncPresetControls();
+    this.setState('loading', {
+      detail: `Loading preset ${preset.label} ...`,
+    });
+
+    try {
+      if (preset.model) {
+        if (preset.model.files && preset.model.files.length > 0) {
+          const modelFileMap = await this.fetchPresetFileMap(preset.model.files);
+          const urdfPaths = this.urdfLoadService.getAvailableUrdfPaths(modelFileMap);
+          if (urdfPaths.length === 0) {
+            throw new Error(`Preset "${preset.label}" does not contain any URDF file.`);
+          }
+
+          const selectedUrdfPath = preset.model.selectedUrdfPath ?? urdfPaths[0];
+          if (!selectedUrdfPath || !modelFileMap.has(selectedUrdfPath)) {
+            throw new Error(
+              `Preset "${preset.label}" selectedUrdfPath is missing: ${preset.model.selectedUrdfPath ?? ''}`,
+            );
+          }
+
+          this.droppedFileMap = modelFileMap;
+          this.availableUrdfPaths = urdfPaths;
+          this.selectedUrdfPath = selectedUrdfPath;
+          this.renderUrdfList();
+          await this.loadSelectedUrdf(selectedUrdfPath);
+
+          if (
+            !this.lastLoadResult ||
+            !modelFileMap.has(this.lastLoadResult.selectedUrdfPath)
+          ) {
+            throw new Error(`Failed to load URDF for preset "${preset.label}".`);
+          }
+        } else {
+          const selectedUrdfPath = preset.model.selectedUrdfPath ?? preset.model.urdfPath;
+          if (!selectedUrdfPath) {
+            throw new Error(`Preset "${preset.label}" does not define model urdfPath.`);
+          }
+
+          this.droppedFileMap = null;
+          this.availableUrdfPaths = [selectedUrdfPath];
+          this.selectedUrdfPath = selectedUrdfPath;
+          this.renderUrdfList();
+          await this.loadSelectedUrdf(selectedUrdfPath);
+
+          if (
+            !this.lastLoadResult ||
+            this.lastLoadResult.selectedUrdfPath !== selectedUrdfPath
+          ) {
+            throw new Error(`Failed to load URDF for preset "${preset.label}".`);
+          }
+        }
+      }
+
+      if (preset.motion) {
+        if ((!preset.motion.files || preset.motion.files.length === 0) && !preset.motion.path) {
+          throw new Error(`Preset "${preset.label}" does not define motion files.`);
+        }
+
+        const motionFiles =
+          preset.motion.files && preset.motion.files.length > 0
+            ? preset.motion.files
+            : [this.buildSinglePresetFile(preset.motion.path as string)];
+        const motionFileMap = await this.fetchPresetFileMap(motionFiles);
+        const preferredMotionPath =
+          preset.motion.selectedMotionPath ??
+          (preset.motion.path ? normalizePresetMapPath(preset.motion.path) : undefined);
+        if (preferredMotionPath && !motionFileMap.has(preferredMotionPath)) {
+          throw new Error(
+            `Preset "${preset.label}" selectedMotionPath is missing: ${preferredMotionPath}`,
+          );
+        }
+
+        if (preset.motion.kind === 'csv') {
+          await this.loadMotionFromDroppedFiles(motionFileMap, preferredMotionPath);
+
+          if (
+            this.currentMotionKind !== 'csv' ||
+            !this.currentMotionSourcePath ||
+            !motionFileMap.has(this.currentMotionSourcePath)
+          ) {
+            throw new Error(`Failed to load CSV motion for preset "${preset.label}".`);
+          }
+        } else {
+          await this.loadBvhMotionFromDroppedFiles(motionFileMap, preferredMotionPath);
+
+          if (
+            this.currentMotionKind !== 'bvh' ||
+            !this.currentMotionSourcePath ||
+            !motionFileMap.has(this.currentMotionSourcePath)
+          ) {
+            throw new Error(`Failed to load BVH motion for preset "${preset.label}".`);
+          }
+        }
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.setState('error', {
+        title: 'Preset Load Failed',
+        detail: reason,
+        dropHint: 'Choose another preset, or drag URDF/CSV/BVH files to continue.',
+      });
+    } finally {
+      this.isPresetLoading = false;
+      this.syncPresetControls();
+    }
   }
 
   private renderUrdfList(): void {
