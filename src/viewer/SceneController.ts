@@ -22,7 +22,7 @@ import {
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-import type { UrdfRobotLike } from '../types/viewer';
+import type { UrdfRobotLike, ViewMode } from '../types/viewer';
 
 const HALF_PI = Math.PI / 2;
 const GRID_BASE_SIZE = 20;
@@ -30,6 +30,7 @@ const MIN_GRID_COVERAGE = 30;
 const DEFAULT_FIT_OFFSET = 1.8;
 const KEY_LIGHT_OFFSET = new Vector3(4, 10, 1);
 const DARK_COLOR_EPSILON = 0.06;
+const ROOT_TRACK_JOINT_NAME = 'floating_base_joint';
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -147,9 +148,12 @@ export class SceneController {
   private visualNodes: any[] = [];
   private collisionNodes: any[] = [];
   private modelUpAxis: '+Z' | '+Y' = '+Z';
+  private viewMode: ViewMode = 'free';
   private showVisual = true;
   private showCollision = false;
   private animationFrameId = 0;
+  private readonly tempTrackTarget = new Vector3();
+  private readonly tempCameraOffset = new Vector3();
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -261,6 +265,17 @@ export class SceneController {
     this.modelRoot.updateMatrixWorld(true);
   }
 
+  setViewMode(mode: ViewMode): void {
+    this.viewMode = mode;
+    if (mode === 'root_lock') {
+      this.syncViewToCurrentRobot();
+    }
+  }
+
+  getViewMode(): ViewMode {
+    return this.viewMode;
+  }
+
   setRobot(robot: UrdfRobotLike): void {
     this.clearRobot();
     this.currentRobot = robot;
@@ -274,6 +289,7 @@ export class SceneController {
     if (box) {
       this.updateGroundAndGrid(box);
     }
+    this.syncViewToCurrentRobot();
   }
 
   setGeometryVisibility(showVisual: boolean, showCollision: boolean): void {
@@ -372,6 +388,22 @@ export class SceneController {
     }
 
     this.updateGroundAndGrid(box);
+  }
+
+  syncViewToCurrentRobot(): void {
+    if (this.viewMode !== 'root_lock' || !this.currentRobot) {
+      return;
+    }
+
+    const target = this.getRootTrackingTarget(this.currentRobot);
+    if (!target) {
+      return;
+    }
+
+    this.tempCameraOffset.copy(this.camera.position).sub(this.controls.target);
+    this.controls.target.copy(target);
+    this.camera.position.copy(target).add(this.tempCameraOffset);
+    this.controls.update();
   }
 
   resize(): void {
@@ -596,6 +628,30 @@ export class SceneController {
     }
 
     return box;
+  }
+
+  private getRootTrackingTarget(robot: UrdfRobotLike): any | null {
+    this.modelRoot.updateMatrixWorld(true);
+
+    const robotAny = robot as any;
+    const rootJoint = robotAny.joints?.[ROOT_TRACK_JOINT_NAME];
+    if (rootJoint && typeof rootJoint.getWorldPosition === 'function') {
+      rootJoint.getWorldPosition(this.tempTrackTarget);
+      return this.tempTrackTarget;
+    }
+
+    if (typeof robotAny.getWorldPosition === 'function') {
+      robotAny.getWorldPosition(this.tempTrackTarget);
+      return this.tempTrackTarget;
+    }
+
+    const bounds = this.computeRobotBounds(robot);
+    if (!bounds) {
+      return null;
+    }
+
+    bounds.getCenter(this.tempTrackTarget);
+    return this.tempTrackTarget;
   }
 
   private updateKeyLightForBounds(box: any, center: any): void {

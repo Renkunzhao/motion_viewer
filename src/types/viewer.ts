@@ -1,4 +1,5 @@
 export type ViewerState = 'idle' | 'drag_over' | 'loading' | 'ready' | 'error';
+export type ViewMode = 'free' | 'root_lock';
 
 export type DroppedFileMap = Map<string, File>;
 

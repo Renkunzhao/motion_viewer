@@ -360,6 +360,52 @@ body {
   text-overflow: ellipsis;
 }
 
+.shortcuts-panel {
+  margin-top: 0.7rem;
+  padding: 0.58rem 0.68rem 0.62rem;
+  border-radius: 12px;
+  border: 1px solid rgba(146, 205, 236, 0.2);
+  background: rgba(4, 16, 24, 0.4);
+}
+
+.shortcuts-panel__title {
+  margin: 0;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.shortcuts-panel__list {
+  margin: 0.46rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.38rem;
+}
+
+.shortcuts-panel__list li {
+  display: flex;
+  align-items: center;
+  gap: 0.54rem;
+  font-size: 0.82rem;
+  color: var(--text-main);
+}
+
+.shortcuts-panel kbd {
+  min-width: 3.1rem;
+  text-align: center;
+  border: 1px solid rgba(146, 205, 236, 0.38);
+  border-bottom-color: rgba(146, 205, 236, 0.62);
+  border-radius: 6px;
+  padding: 0.14rem 0.34rem;
+  font: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: #d8ecf7;
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .status-panel__warnings {
   margin: 0.72rem 0 0;
   padding-left: 1.1rem;

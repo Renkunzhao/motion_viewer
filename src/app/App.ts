@@ -2,6 +2,7 @@ import type {
   DroppedFileMap,
   LoadedRobotResult,
   MotionClip,
+  ViewMode,
   ViewerState,
 } from '../types/viewer';
 import { dataTransferToFileMap, fileListToFileMap } from '../io/drop/dataTransferToFileMap';
@@ -59,6 +60,7 @@ export class AppController {
   private readonly motionFrameSlider: HTMLInputElement;
   private readonly motionFrameLabel: HTMLSpanElement;
   private readonly motionName: HTMLParagraphElement;
+  private readonly shortcutViewModeValue: HTMLSpanElement;
   private readonly folderInput: HTMLInputElement;
   private readonly fileInput: HTMLInputElement;
   private readonly pickFolderButton: HTMLButtonElement;
@@ -81,9 +83,46 @@ export class AppController {
   private motionWarnings: string[] = [];
   private motionFrameSnapshot: MotionFrameSnapshot | null = null;
   private isMotionPlaying = false;
+  private viewMode: ViewMode = 'free';
 
   private readonly onWindowResize = (): void => {
     this.sceneController.resize();
+  };
+
+  private readonly onWindowKeyDown = (event: KeyboardEvent): void => {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.isComposing || event.repeat) {
+      return;
+    }
+
+    const eventTarget = event.target as HTMLElement | null;
+    if (
+      eventTarget?.tagName === 'INPUT' ||
+      eventTarget?.tagName === 'TEXTAREA' ||
+      eventTarget?.isContentEditable
+    ) {
+      return;
+    }
+
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      this.toggleViewMode();
+      return;
+    }
+
+    if (event.code === 'Space' && this.currentMotionClip) {
+      event.preventDefault();
+      if (this.isMotionPlaying) {
+        this.motionPlayer.pause();
+      } else {
+        this.motionPlayer.play();
+      }
+      return;
+    }
+
+    if ((event.key === 'r' || event.key === 'R') && this.currentMotionClip) {
+      event.preventDefault();
+      this.motionPlayer.reset();
+    }
   };
 
   private readonly onFolderInputChange = (): void => {
@@ -187,6 +226,7 @@ export class AppController {
     this.motionFrameSlider = requireElement<HTMLInputElement>('motion-frame-slider');
     this.motionFrameLabel = requireElement<HTMLSpanElement>('motion-frame-label');
     this.motionName = requireElement<HTMLParagraphElement>('motion-name');
+    this.shortcutViewModeValue = requireElement<HTMLSpanElement>('shortcut-view-mode');
     this.folderInput = requireElement<HTMLInputElement>('folder-input');
     this.fileInput = requireElement<HTMLInputElement>('file-input');
     this.pickFolderButton = requireElement<HTMLButtonElement>('pick-folder-btn');
@@ -195,6 +235,7 @@ export class AppController {
 
     this.sceneController = new SceneController(canvas);
     this.sceneController.setModelUpAxis('+Z');
+    this.sceneController.setViewMode(this.viewMode);
     this.sceneController.onViewWarning = (warning) => {
       this.sceneWarning = warning;
       if (this.viewerState === 'ready' && this.lastLoadResult) {
@@ -209,6 +250,7 @@ export class AppController {
       this.motionFrameSnapshot = snapshot;
       this.syncMotionControls();
       this.sceneController.syncGroundToCurrentRobot();
+      this.sceneController.syncViewToCurrentRobot();
     };
     this.motionPlayer.onPlaybackStateChanged = (isPlaying) => {
       this.isMotionPlaying = isPlaying;
@@ -233,6 +275,7 @@ export class AppController {
     });
 
     window.addEventListener('resize', this.onWindowResize);
+    window.addEventListener('keydown', this.onWindowKeyDown);
     this.folderInput.addEventListener('change', this.onFolderInputChange);
     this.fileInput.addEventListener('change', this.onFileInputChange);
     this.pickFolderButton.addEventListener('click', this.onPickFolderClick);
@@ -247,6 +290,7 @@ export class AppController {
 
     this.syncVisibilityButtons();
     this.syncMotionControls();
+    this.syncShortcutPanel();
     this.renderState();
   }
 
@@ -272,6 +316,7 @@ export class AppController {
   dispose(): void {
     this.removeDropHandlers();
     window.removeEventListener('resize', this.onWindowResize);
+    window.removeEventListener('keydown', this.onWindowKeyDown);
     this.folderInput.removeEventListener('change', this.onFolderInputChange);
     this.fileInput.removeEventListener('change', this.onFileInputChange);
     this.pickFolderButton.removeEventListener('click', this.onPickFolderClick);
@@ -489,10 +534,14 @@ export class AppController {
     const sourceDetail = this.currentMotionSourcePath
       ? ` Motion source: ${this.currentMotionSourcePath}.`
       : '';
+    const viewModeDetail =
+      this.viewMode === 'root_lock'
+        ? ' View mode: root lock (press Tab to switch).'
+        : ' View mode: free (press Tab to switch).';
 
     this.setState('ready', {
       title: `Loaded ${result.robotName || 'URDF Robot'}`,
-      detail: `${result.jointCount} joints, ${result.linkCount} links, source: ${result.selectedUrdfPath}. Drop URDF to replace robot.${motionDetail}${sourceDetail}`,
+      detail: `${result.jointCount} joints, ${result.linkCount} links, source: ${result.selectedUrdfPath}. Drop URDF to replace robot.${motionDetail}${sourceDetail}${viewModeDetail}`,
       warnings: this.collectReadyWarnings(result.warnings),
     });
   }
@@ -551,6 +600,21 @@ export class AppController {
     this.motionFrameSlider.value = String(snapshot.frameIndex);
     this.motionFrameLabel.textContent = `Frame ${snapshot.frameIndex + 1} / ${snapshot.frameCount}`;
     this.motionName.textContent = `${this.currentMotionClip.name} · ${this.currentMotionClip.fps} FPS · ${G1_CSV_STRIDE} cols (${G1_JOINT_NAMES.length} joints + root)`;
+  }
+
+  private toggleViewMode(): void {
+    this.viewMode = this.viewMode === 'free' ? 'root_lock' : 'free';
+    this.sceneController.setViewMode(this.viewMode);
+    this.syncShortcutPanel();
+
+    if (this.lastLoadResult && this.viewerState === 'ready') {
+      this.renderReadyState(this.lastLoadResult);
+    }
+  }
+
+  private syncShortcutPanel(): void {
+    this.shortcutViewModeValue.textContent =
+      this.viewMode === 'root_lock' ? 'View: Root Lock' : 'View: Free';
   }
 
   private renderUrdfList(): void {
