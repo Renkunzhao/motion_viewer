@@ -1,4 +1,4 @@
-import { Euler, Quaternion } from 'three';
+import { Euler, Quaternion, Vector3 } from 'three';
 
 import { G1_JOINT_NAMES, G1_JOINT_VALUE_OFFSET, G1_ROOT_JOINT_NAME } from '../io/motion/G1MotionSchema';
 import type { MotionClip, UrdfRobotLike } from '../types/viewer';
@@ -63,6 +63,20 @@ export class G1MotionPlayer {
   private clip: MotionClip | null = null;
   private rootSetter: ((x: number, y: number, z: number, roll: number, pitch: number, yaw: number) => void) | null =
     null;
+  private rootTransformAnchor:
+    | {
+        basePosition: any;
+        baseQuaternion: any;
+      }
+    | null = null;
+  private rootTransformFallback:
+    | {
+        position: { copy: (value: any) => unknown };
+        quaternion: { copy: (value: any) => unknown };
+        basePosition: any;
+        baseQuaternion: any;
+      }
+    | null = null;
   private jointSetters: Array<((value: number) => void) | null> = [];
   private bindingReport: MotionBindingReport = {
     missingRequiredJoints: [...G1_JOINT_NAMES],
@@ -72,6 +86,9 @@ export class G1MotionPlayer {
   private isPlaying = false;
   private rafId: number | null = null;
   private playbackStartTimeMs = 0;
+  private readonly tempMotionPosition = new Vector3();
+  private readonly tempComposedPosition = new Vector3();
+  private readonly tempComposedQuaternion = new Quaternion();
 
   constructor(options: G1MotionPlayerOptions = {}) {
     this.now = options.now ?? defaultNow;
@@ -82,7 +99,14 @@ export class G1MotionPlayer {
   }
 
   attachRobot(robot: UrdfRobotLike | null): MotionBindingReport {
+    const robotChanged = this.robot !== robot;
     this.robot = robot;
+    if (!robot) {
+      this.rootTransformAnchor = null;
+    } else if (robotChanged) {
+      this.rootTransformAnchor = this.captureRootTransformAnchor(robot);
+    }
+
     this.bindingReport = this.rebindRobot();
     if (this.clip && this.bindingReport.missingRequiredJoints.length === 0) {
       this.applyFrame(this.currentFrame);
@@ -216,6 +240,7 @@ export class G1MotionPlayer {
 
   private rebindRobot(): MotionBindingReport {
     this.rootSetter = null;
+    this.rootTransformFallback = null;
     this.jointSetters = [];
 
     if (!this.robot) {
@@ -237,10 +262,19 @@ export class G1MotionPlayer {
     }
 
     this.rootSetter = this.createRootSetter();
+    if (!this.rootSetter) {
+      this.rootTransformFallback = this.createRootTransformFallback();
+    }
     const report: MotionBindingReport = {
       missingRequiredJoints: missingRequired,
-      missingRootJoint: !this.rootSetter,
+      missingRootJoint: !this.rootSetter && !this.rootTransformFallback,
     };
+
+    if (!report.missingRootJoint && !this.rootSetter && this.rootTransformFallback && this.clip) {
+      this.onWarning?.(
+        `Joint "${G1_ROOT_JOINT_NAME}" was not found. Root motion is applied to robot transform fallback.`,
+      );
+    }
 
     if (report.missingRootJoint && this.clip) {
       this.onWarning?.(
@@ -303,6 +337,75 @@ export class G1MotionPlayer {
     };
   }
 
+  private captureRootTransformAnchor(robot: UrdfRobotLike): {
+    basePosition: any;
+    baseQuaternion: any;
+  } | null {
+    const target = robot as unknown as {
+      position?: { clone?: () => any };
+      quaternion?: { clone?: () => any };
+    };
+
+    if (
+      !target.position ||
+      !target.quaternion ||
+      typeof target.position.clone !== 'function' ||
+      typeof target.quaternion.clone !== 'function'
+    ) {
+      return null;
+    }
+
+    return {
+      basePosition: target.position.clone(),
+      baseQuaternion: target.quaternion.clone(),
+    };
+  }
+
+  private createRootTransformFallback():
+    | {
+        position: { copy: (value: any) => unknown };
+        quaternion: { copy: (value: any) => unknown };
+        basePosition: any;
+        baseQuaternion: any;
+      }
+    | null {
+    if (!this.robot) {
+      return null;
+    }
+
+    const target = this.robot as unknown as {
+      position?: { clone?: () => any; copy?: (value: any) => unknown };
+      quaternion?: { clone?: () => any; copy?: (value: any) => unknown };
+      matrixWorldNeedsUpdate?: boolean;
+    };
+
+    if (
+      !target.position ||
+      !target.quaternion ||
+      typeof target.position.clone !== 'function' ||
+      typeof target.position.copy !== 'function' ||
+      typeof target.quaternion.clone !== 'function' ||
+      typeof target.quaternion.copy !== 'function'
+    ) {
+      return null;
+    }
+
+    const anchor = this.rootTransformAnchor;
+    if (!anchor) {
+      return null;
+    }
+
+    const position = target.position as { clone: () => any; copy: (value: any) => unknown };
+    const quaternion = target.quaternion as { clone: () => any; copy: (value: any) => unknown };
+
+    return {
+      position,
+      quaternion,
+      basePosition: anchor.basePosition,
+      baseQuaternion: anchor.baseQuaternion,
+    };
+  }
+
   private applyFrame(frameIndex: number): void {
     if (!this.clip) {
       return;
@@ -337,6 +440,34 @@ export class G1MotionPlayer {
         this.tempEuler.y,
         this.tempEuler.z,
       );
+    } else if (this.rootTransformFallback) {
+      const x = data[base];
+      const y = data[base + 1];
+      const z = data[base + 2];
+      const qx = data[base + 3];
+      const qy = data[base + 4];
+      const qz = data[base + 5];
+      const qw = data[base + 6];
+      const fallback = this.rootTransformFallback;
+
+      this.tempQuat.set(qx, qy, qz, qw);
+      if (this.tempQuat.lengthSq() < 1e-10) {
+        this.tempQuat.identity();
+      } else {
+        this.tempQuat.normalize();
+      }
+
+      this.tempMotionPosition.set(x, y, z);
+      this.tempComposedPosition
+        .copy(fallback.basePosition)
+        .applyQuaternion(this.tempQuat)
+        .add(this.tempMotionPosition);
+      this.tempComposedQuaternion
+        .copy(this.tempQuat)
+        .multiply(fallback.baseQuaternion);
+
+      fallback.position.copy(this.tempComposedPosition);
+      fallback.quaternion.copy(this.tempComposedQuaternion);
     }
 
     for (let jointIndex = 0; jointIndex < this.jointSetters.length; jointIndex += 1) {

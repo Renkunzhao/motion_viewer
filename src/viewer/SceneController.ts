@@ -235,13 +235,13 @@ export class SceneController {
     this.groundPlane.visible = true;
     this.scene.add(this.groundPlane);
 
-    this.referenceGrid = new GridHelper(GRID_BASE_SIZE, 20, '#3a5666', '#1a303a');
+    this.referenceGrid = new GridHelper(GRID_BASE_SIZE, 20, '#4b7a95', '#26485c');
     this.referenceGrid.position.y = 0;
     const gridMaterials = Array.isArray(this.referenceGrid.material)
       ? this.referenceGrid.material
       : [this.referenceGrid.material];
     for (const material of gridMaterials) {
-      material.opacity = 0.72;
+      material.opacity = 0.92;
       material.transparent = true;
       material.depthWrite = false;
     }
@@ -358,6 +358,19 @@ export class SceneController {
 
     this.groundPlane.scale.setScalar(gridScale);
     this.groundPlane.position.y = box.min.y + 0.0001;
+  }
+
+  syncGroundToCurrentRobot(): void {
+    if (!this.currentRobot) {
+      return;
+    }
+
+    const box = this.computeRobotBounds(this.currentRobot);
+    if (!box) {
+      return;
+    }
+
+    this.updateGroundAndGrid(box);
   }
 
   resize(): void {

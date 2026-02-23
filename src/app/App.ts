@@ -208,6 +208,7 @@ export class AppController {
     this.motionPlayer.onFrameChanged = (snapshot) => {
       this.motionFrameSnapshot = snapshot;
       this.syncMotionControls();
+      this.sceneController.syncGroundToCurrentRobot();
     };
     this.motionPlayer.onPlaybackStateChanged = (isPlaying) => {
       this.isMotionPlaying = isPlaying;

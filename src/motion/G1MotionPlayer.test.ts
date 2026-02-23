@@ -1,4 +1,4 @@
-import { Euler, Quaternion } from 'three';
+import { Euler, Quaternion, Vector3 } from 'three';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -47,9 +47,18 @@ function createClip(frameCount: number): MotionClip {
 function createMockRobot(options: {
   includeRoot?: boolean;
   jointNames?: readonly string[];
-} = {}): { robot: UrdfRobotLike; calls: CapturedJointCall[] } {
+  includeTransform?: boolean;
+  initialPosition?: any;
+  initialQuaternion?: any;
+} = {}): {
+  robot: UrdfRobotLike;
+  calls: CapturedJointCall[];
+  initialPosition: any;
+  initialQuaternion: any;
+} {
   const includeRoot = options.includeRoot ?? true;
   const jointNames = options.jointNames ?? G1_JOINT_NAMES;
+  const includeTransform = options.includeTransform ?? false;
   const calls: CapturedJointCall[] = [];
   const joints: Record<string, {}> = {};
 
@@ -73,7 +82,19 @@ function createMockRobot(options: {
     },
   };
 
-  return { robot, calls };
+  const initialPosition = options.initialPosition?.clone() ?? new Vector3();
+  const initialQuaternion = options.initialQuaternion?.clone() ?? new Quaternion();
+
+  if (includeTransform) {
+    const robotWithTransform = robot as UrdfRobotLike & {
+      position: any;
+      quaternion: any;
+    };
+    robotWithTransform.position = initialPosition.clone();
+    robotWithTransform.quaternion = initialQuaternion.clone();
+  }
+
+  return { robot, calls, initialPosition, initialQuaternion };
 }
 
 describe('G1MotionPlayer', () => {
@@ -135,6 +156,85 @@ describe('G1MotionPlayer', () => {
       G1_JOINT_NAMES[1],
     ]);
     expect(report.missingRootJoint).toBe(true);
+  });
+
+  it('falls back to robot transform root motion when floating joint is missing', () => {
+    const rootEuler = new Euler(0.35, -0.22, 0.18, 'XYZ');
+    const rootQuat = new Quaternion().setFromEuler(rootEuler);
+    const basePosition = new Vector3(0.4, -0.15, 0.8);
+    const baseQuaternion = new Quaternion().setFromEuler(new Euler(0.1, 0.03, -0.07, 'XYZ'));
+    const { robot, calls, initialPosition, initialQuaternion } = createMockRobot({
+      includeRoot: false,
+      includeTransform: true,
+      initialPosition: basePosition,
+      initialQuaternion: baseQuaternion,
+    });
+    const clip = createClip(1);
+    clip.data[0] = 1.2;
+    clip.data[1] = -0.6;
+    clip.data[2] = 0.5;
+    clip.data[3] = rootQuat.x;
+    clip.data[4] = rootQuat.y;
+    clip.data[5] = rootQuat.z;
+    clip.data[6] = rootQuat.w;
+
+    const warnings: string[] = [];
+    const player = new G1MotionPlayer();
+    player.onWarning = (warning) => warnings.push(warning);
+    player.attachRobot(robot);
+    const report = player.loadClip(clip);
+
+    expect(report.missingRootJoint).toBe(false);
+    expect(
+      warnings.some((warning) => warning.includes('Root motion is applied to robot transform fallback')),
+    ).toBe(true);
+    expect(calls.some((call) => call.jointName === G1_ROOT_JOINT_NAME)).toBe(false);
+
+    const robotWithTransform = robot as UrdfRobotLike & {
+      position: any;
+      quaternion: any;
+    };
+    const expectedPosition = initialPosition.clone().applyQuaternion(rootQuat).add(new Vector3(1.2, -0.6, 0.5));
+    const expectedQuaternion = rootQuat.clone().multiply(initialQuaternion);
+
+    expect(robotWithTransform.position.x).toBeCloseTo(expectedPosition.x, 5);
+    expect(robotWithTransform.position.y).toBeCloseTo(expectedPosition.y, 5);
+    expect(robotWithTransform.position.z).toBeCloseTo(expectedPosition.z, 5);
+    expect(robotWithTransform.quaternion.x).toBeCloseTo(expectedQuaternion.x, 5);
+    expect(robotWithTransform.quaternion.y).toBeCloseTo(expectedQuaternion.y, 5);
+    expect(robotWithTransform.quaternion.z).toBeCloseTo(expectedQuaternion.z, 5);
+    expect(robotWithTransform.quaternion.w).toBeCloseTo(expectedQuaternion.w, 5);
+  });
+
+  it('keeps fallback root anchor stable across multiple csv loads on the same robot', () => {
+    const { robot, initialPosition } = createMockRobot({
+      includeRoot: false,
+      includeTransform: true,
+      initialPosition: new Vector3(0.25, -0.1, 0.6),
+    });
+    const firstClip = createClip(1);
+    const secondClip = createClip(1);
+    firstClip.data[0] = 1.0;
+    firstClip.data[1] = 0.0;
+    firstClip.data[2] = 0.0;
+    secondClip.data[0] = 2.0;
+    secondClip.data[1] = 0.0;
+    secondClip.data[2] = 0.0;
+
+    const player = new G1MotionPlayer();
+    player.attachRobot(robot);
+    player.loadClip(firstClip);
+
+    // Mimic App flow: dropping another CSV re-attaches the same robot before loading.
+    player.attachRobot(robot);
+    player.loadClip(secondClip);
+
+    const robotWithTransform = robot as UrdfRobotLike & {
+      position: any;
+    };
+    expect(robotWithTransform.position.x).toBeCloseTo(initialPosition.x + 2.0, 5);
+    expect(robotWithTransform.position.y).toBeCloseTo(initialPosition.y, 5);
+    expect(robotWithTransform.position.z).toBeCloseTo(initialPosition.z, 5);
   });
 
   it('stops at the last frame and emits playback state transitions', () => {
