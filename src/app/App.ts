@@ -44,6 +44,8 @@ export class AppController {
   private readonly motionControlsSection: HTMLElement;
   private readonly motionPlayButton: HTMLButtonElement;
   private readonly motionResetButton: HTMLButtonElement;
+  private readonly motionFpsControl: HTMLDivElement;
+  private readonly motionFpsInput: HTMLInputElement;
   private readonly motionFrameSlider: HTMLInputElement;
   private readonly motionFrameLabel: HTMLSpanElement;
   private readonly motionName: HTMLParagraphElement;
@@ -208,6 +210,23 @@ export class AppController {
     this.seekActiveMotion(frameIndex);
   };
 
+  private readonly onMotionFpsInput = (): void => {
+    if (this.currentMotionKind !== 'csv' || !this.currentMotionClip) {
+      return;
+    }
+
+    const rawFps = Number(this.motionFpsInput.value);
+    if (!Number.isFinite(rawFps) || rawFps <= 0) {
+      return;
+    }
+
+    this.applyCsvMotionFps(rawFps);
+  };
+
+  private readonly onMotionFpsChange = (): void => {
+    this.syncMotionFpsInput();
+  };
+
   constructor() {
     this.appRoot = requireElement<HTMLDivElement>('app');
     const canvas = requireElement<HTMLCanvasElement>('viewer-canvas');
@@ -223,6 +242,8 @@ export class AppController {
     this.motionControlsSection = requireElement<HTMLElement>('motion-controls-section');
     this.motionPlayButton = requireElement<HTMLButtonElement>('motion-play-btn');
     this.motionResetButton = requireElement<HTMLButtonElement>('motion-reset-btn');
+    this.motionFpsControl = requireElement<HTMLDivElement>('motion-fps-control');
+    this.motionFpsInput = requireElement<HTMLInputElement>('motion-fps-input');
     this.motionFrameSlider = requireElement<HTMLInputElement>('motion-frame-slider');
     this.motionFrameLabel = requireElement<HTMLSpanElement>('motion-frame-label');
     this.motionName = requireElement<HTMLParagraphElement>('motion-name');
@@ -310,6 +331,8 @@ export class AppController {
     this.urdfList.addEventListener('click', this.onUrdfListClick);
     this.motionPlayButton.addEventListener('click', this.onMotionPlayClick);
     this.motionResetButton.addEventListener('click', this.onMotionResetClick);
+    this.motionFpsInput.addEventListener('input', this.onMotionFpsInput);
+    this.motionFpsInput.addEventListener('change', this.onMotionFpsChange);
     this.motionFrameSlider.addEventListener('input', this.onMotionFrameInput);
 
     this.syncVisibilityButtons();
@@ -355,6 +378,8 @@ export class AppController {
     this.urdfList.removeEventListener('click', this.onUrdfListClick);
     this.motionPlayButton.removeEventListener('click', this.onMotionPlayClick);
     this.motionResetButton.removeEventListener('click', this.onMotionResetClick);
+    this.motionFpsInput.removeEventListener('input', this.onMotionFpsInput);
+    this.motionFpsInput.removeEventListener('change', this.onMotionFpsChange);
     this.motionFrameSlider.removeEventListener('input', this.onMotionFrameInput);
 
     this.urdfLoadService.dispose();
@@ -806,6 +831,39 @@ export class AppController {
     return [...merged];
   }
 
+  private applyCsvMotionFps(nextFps: number): void {
+    if (this.currentMotionKind !== 'csv' || !this.currentMotionClip) {
+      return;
+    }
+
+    const safeFps = Math.max(0.1, Number(nextFps.toFixed(3)));
+    this.currentMotionClip.fps = safeFps;
+    const currentFrame = this.motionFrameSnapshot?.frameIndex ?? 0;
+    this.motionPlayer.seek(currentFrame);
+    this.syncMotionControls();
+
+    if (this.viewerState === 'ready') {
+      this.renderCurrentReadyState();
+    }
+  }
+
+  private formatMotionFpsValue(fps: number): string {
+    return Number(fps.toFixed(3)).toString();
+  }
+
+  private syncMotionFpsInput(): void {
+    if (this.currentMotionKind === 'csv' && this.currentMotionClip) {
+      this.motionFpsControl.hidden = false;
+      this.motionFpsInput.disabled = false;
+      this.motionFpsInput.value = this.formatMotionFpsValue(this.currentMotionClip.fps);
+      return;
+    }
+
+    this.motionFpsControl.hidden = true;
+    this.motionFpsInput.disabled = true;
+    this.motionFpsInput.value = '30';
+  }
+
   private syncVisibilityButtons(): void {
     this.showVisualButton.classList.toggle('active', this.showVisual);
     this.showCollisionButton.classList.toggle('active', this.showCollision);
@@ -825,6 +883,7 @@ export class AppController {
       this.motionFrameSlider.value = '0';
       this.motionFrameLabel.textContent = 'Frame 0 / 0';
       this.motionName.textContent = 'No motion loaded';
+      this.syncMotionFpsInput();
       return;
     }
 
@@ -852,15 +911,18 @@ export class AppController {
     if (this.currentMotionKind === 'csv' && this.currentMotionClip) {
       const jointCount = this.currentMotionClip.schema.jointNames.length;
       this.motionName.textContent = `${this.currentMotionClip.name} · ${this.currentMotionClip.fps} FPS · ${this.currentMotionClip.sourceColumnCount} src cols -> ${this.currentMotionClip.stride} mapped cols (${jointCount} joints + root, ${this.currentMotionClip.csvMode})`;
+      this.syncMotionFpsInput();
       return;
     }
 
     if (this.currentMotionKind === 'bvh' && this.currentBvhMotion) {
       this.motionName.textContent = `${this.currentBvhMotion.name} · ${this.currentBvhMotion.fps.toFixed(2)} FPS · ${this.currentBvhMotion.jointCount} joints (BVH)`;
+      this.syncMotionFpsInput();
       return;
     }
 
     this.motionName.textContent = 'No motion loaded';
+    this.syncMotionFpsInput();
   }
 
   private toggleViewMode(): void {

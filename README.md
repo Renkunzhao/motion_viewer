@@ -29,6 +29,7 @@ Its core purpose is to quickly load robot models in the browser and play motion 
 - In `root lock` view mode, BVH now tracks the animated root bone position (similar to BVHView `track`)
 - Unsupported drops can trigger a temporary red warning panel, then return to ready layout while keeping the last warning in the lower-left hint
 - Controls: `Space` play/pause, `R` reset to frame 1, `Tab` switch view mode, slider seek
+- CSV playback FPS is editable in the Motion panel via the `FPS` input box (takes effect immediately)
 
 ## Robot Support
 

@@ -296,6 +296,44 @@ body {
   gap: 0.42rem;
 }
 
+.motion-controls__fps {
+  margin-top: 0.52rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.motion-controls__fps label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.motion-controls__fps-input {
+  width: 100%;
+  min-width: 0;
+  appearance: textfield;
+  border: 1px solid rgba(146, 205, 236, 0.36);
+  border-radius: 8px;
+  background: rgba(7, 22, 32, 0.8);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.28rem 0.46rem;
+}
+
+.motion-controls__fps-input:focus {
+  outline: 1px solid rgba(131, 223, 193, 0.85);
+  border-color: rgba(131, 223, 193, 0.85);
+}
+
+.motion-controls__fps-input::-webkit-inner-spin-button,
+.motion-controls__fps-input::-webkit-outer-spin-button {
+  opacity: 0.85;
+}
+
 .motion-controls__slider {
   width: 100%;
   margin: 0.66rem 0 0;

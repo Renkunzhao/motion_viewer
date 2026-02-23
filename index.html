@@ -60,6 +60,18 @@
             <button id="motion-play-btn" type="button" class="toggle-chip">Play</button>
             <button id="motion-reset-btn" type="button" class="toggle-chip">Reset</button>
           </div>
+          <div id="motion-fps-control" class="motion-controls__fps" hidden>
+            <label for="motion-fps-input">FPS</label>
+            <input
+              id="motion-fps-input"
+              class="motion-controls__fps-input"
+              type="number"
+              min="0.1"
+              step="0.1"
+              value="30"
+              inputmode="decimal"
+            />
+          </div>
           <input
             id="motion-frame-slider"
             class="motion-controls__slider"
