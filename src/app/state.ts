@@ -10,35 +10,35 @@ export interface StateCopy {
 const STATE_COPY: Record<ViewerState, StateCopy> = {
   idle: {
     chip: 'Idle',
-    title: 'Waiting For Input',
-    detail: 'Drop a URDF file set to start.',
+    title: 'Motion Viewer',
+    detail: 'Drag and drop to load URDF / CSV / BVH.',
     dropHint:
-      'Drag a robot folder or multi-file set. Chromium browsers have full folder support.',
+      'Supported: URDF (.urdf), CSV (.csv), BVH (.bvh). Drag files/folders or use Select Folder / Select Files. Space: play/pause, R: reset, Tab: switch view.',
   },
   drag_over: {
     chip: 'Drop',
     title: 'Drop To Load',
-    detail: 'Release mouse to parse URDF and referenced mesh files.',
-    dropHint: 'Release now to load this robot.',
+    detail: 'Release mouse to parse dropped URDF / CSV / BVH files.',
+    dropHint: 'Release now to load dropped files.',
   },
   loading: {
     chip: 'Loading',
     title: 'Loading Files',
-    detail: 'Parsing URDF and resolving meshes.',
+    detail: 'Parsing files and preparing scene.',
     dropHint: 'Loading is in progress. Please wait.',
   },
   ready: {
     chip: 'Ready',
-    title: 'Robot Loaded',
+    title: 'Viewer Ready',
     detail:
-      'Drop another model to replace robot, or drop a motion CSV file to play animation.',
-    dropHint: 'Drop URDF to replace robot, or drop CSV to load motion.',
+      'Drop another model to replace robot, or drop CSV/BVH motion to play animation.',
+    dropHint: 'Drop URDF/CSV/BVH to update current view.',
   },
   error: {
     chip: 'Error',
     title: 'Load Failed',
     detail: 'Fix the input files and try again.',
-    dropHint: 'Drop another file set to retry.',
+    dropHint: 'Drop supported files (URDF/CSV/BVH) to retry.',
   },
 };
 

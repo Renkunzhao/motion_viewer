@@ -18,10 +18,10 @@
       <div id="drop-overlay" class="drop-overlay">
         <div class="drop-overlay__panel">
           <p class="drop-overlay__eyebrow">Motion Viewer</p>
-          <h1>URDF Drag Loader</h1>
+          <h1>Motion Viewer</h1>
           <p id="drop-hint" class="drop-overlay__hint">
-            Drag a robot folder or multi-file set. Chromium browsers have full
-            folder support.
+            Supported: URDF (.urdf), CSV (.csv), BVH (.bvh). Drag files/folders or use Select
+            Folder / Select Files. Space: play/pause, R: reset, Tab: switch view.
           </p>
           <div class="drop-overlay__actions">
             <button id="pick-folder-btn" type="button">Select Folder</button>
@@ -45,7 +45,7 @@
           </button>
         </div>
         <p id="status-detail" class="status-panel__detail">
-          Drop a URDF file set to start.
+          Drag and drop to load URDF / CSV / BVH.
         </p>
         <section id="urdf-list-section" class="urdf-list-section" hidden>
           <p class="urdf-list-section__title">URDF Files</p>
@@ -98,7 +98,7 @@
       type="file"
       multiple
       hidden
-      accept=".urdf,.csv,.stl,.obj,.dae,.xml,.png,.jpg,.jpeg,.bmp,.gif,.tga,.webp"
+      accept=".urdf,.csv,.bvh,.stl,.obj,.dae,.xml,.png,.jpg,.jpeg,.bmp,.gif,.tga,.webp"
     />
     <script type="module" src="/src/main.ts"></script>
   </body>

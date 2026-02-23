@@ -7,8 +7,10 @@ import type {
 } from '../types/viewer';
 import { dataTransferToFileMap, fileListToFileMap } from '../io/drop/dataTransferToFileMap';
 import { registerDropHandlers } from '../io/drop/registerDropHandlers';
+import { BvhMotionService } from '../io/motion/BvhMotionService';
 import { CsvMotionService } from '../io/motion/CsvMotionService';
 import { UrdfLoadService } from '../io/urdf/UrdfLoadService';
+import { BvhMotionPlayer } from '../motion/BvhMotionPlayer';
 import { G1MotionPlayer, type MotionFrameSnapshot } from '../motion/G1MotionPlayer';
 import { SceneController } from '../viewer/SceneController';
 import { getStateCopy } from './state';
@@ -27,7 +29,9 @@ export class AppController {
   private readonly sceneController: SceneController;
   private readonly urdfLoadService: UrdfLoadService;
   private readonly csvMotionService: CsvMotionService;
+  private readonly bvhMotionService: BvhMotionService;
   private readonly motionPlayer: G1MotionPlayer;
+  private readonly bvhMotionPlayer: BvhMotionPlayer;
   private readonly dropHint: HTMLParagraphElement;
   private readonly stateChip: HTMLSpanElement;
   private readonly statusTitle: HTMLElement;
@@ -62,6 +66,16 @@ export class AppController {
   private showCollision = false;
   private lastLoadResult: LoadedRobotResult | null = null;
   private currentMotionClip: MotionClip | null = null;
+  private currentBvhMotion:
+    | {
+        name: string;
+        sourcePath: string;
+        frameCount: number;
+        fps: number;
+        jointCount: number;
+      }
+    | null = null;
+  private currentMotionKind: 'csv' | 'bvh' | null = null;
   private currentMotionSourcePath: string | null = null;
   private motionWarnings: string[] = [];
   private motionFrameSnapshot: MotionFrameSnapshot | null = null;
@@ -92,19 +106,19 @@ export class AppController {
       return;
     }
 
-    if (event.code === 'Space' && this.currentMotionClip) {
+    if (event.code === 'Space' && this.hasAnyMotion()) {
       event.preventDefault();
       if (this.isMotionPlaying) {
-        this.motionPlayer.pause();
+        this.pauseActiveMotion();
       } else {
-        this.motionPlayer.play();
+        this.playActiveMotion();
       }
       return;
     }
 
-    if ((event.key === 'r' || event.key === 'R') && this.currentMotionClip) {
+    if ((event.key === 'r' || event.key === 'R') && this.hasAnyMotion()) {
       event.preventDefault();
-      this.motionPlayer.reset();
+      this.resetActiveMotion();
     }
   };
 
@@ -158,28 +172,28 @@ export class AppController {
   };
 
   private readonly onMotionPlayClick = (): void => {
-    if (!this.currentMotionClip) {
+    if (!this.hasAnyMotion()) {
       return;
     }
 
     if (this.isMotionPlaying) {
-      this.motionPlayer.pause();
+      this.pauseActiveMotion();
       return;
     }
 
-    this.motionPlayer.play();
+    this.playActiveMotion();
   };
 
   private readonly onMotionResetClick = (): void => {
-    if (!this.currentMotionClip) {
+    if (!this.hasAnyMotion()) {
       return;
     }
 
-    this.motionPlayer.reset();
+    this.resetActiveMotion();
   };
 
   private readonly onMotionFrameInput = (): void => {
-    if (!this.currentMotionClip) {
+    if (!this.hasAnyMotion()) {
       return;
     }
 
@@ -188,7 +202,7 @@ export class AppController {
       return;
     }
 
-    this.motionPlayer.seek(frameIndex);
+    this.seekActiveMotion(frameIndex);
   };
 
   constructor() {
@@ -221,14 +235,16 @@ export class AppController {
     this.sceneController.setViewMode(this.viewMode);
     this.sceneController.onViewWarning = (warning) => {
       this.sceneWarning = warning;
-      if (this.viewerState === 'ready' && this.lastLoadResult) {
-        this.renderReadyState(this.lastLoadResult);
+      if (this.viewerState === 'ready') {
+        this.renderCurrentReadyState();
       }
     };
 
     this.urdfLoadService = new UrdfLoadService();
     this.csvMotionService = new CsvMotionService();
+    this.bvhMotionService = new BvhMotionService();
     this.motionPlayer = new G1MotionPlayer();
+    this.bvhMotionPlayer = new BvhMotionPlayer();
     this.motionPlayer.onFrameChanged = (snapshot) => {
       this.motionFrameSnapshot = snapshot;
       this.syncMotionControls();
@@ -238,8 +254,8 @@ export class AppController {
     this.motionPlayer.onPlaybackStateChanged = (isPlaying) => {
       this.isMotionPlaying = isPlaying;
       this.syncMotionControls();
-      if (this.lastLoadResult && this.viewerState === 'ready') {
-        this.renderReadyState(this.lastLoadResult);
+      if (this.viewerState === 'ready') {
+        this.renderCurrentReadyState();
       }
     };
     this.motionPlayer.onWarning = (warning) => {
@@ -247,8 +263,30 @@ export class AppController {
         this.motionWarnings.push(warning);
       }
 
-      if (this.lastLoadResult && this.viewerState === 'ready') {
-        this.renderReadyState(this.lastLoadResult);
+      if (this.viewerState === 'ready') {
+        this.renderCurrentReadyState();
+      }
+    };
+    this.bvhMotionPlayer.onFrameChanged = (snapshot) => {
+      this.motionFrameSnapshot = snapshot;
+      this.syncMotionControls();
+      this.sceneController.syncGroundToCurrentRobot();
+      this.sceneController.syncViewToCurrentRobot();
+    };
+    this.bvhMotionPlayer.onPlaybackStateChanged = (isPlaying) => {
+      this.isMotionPlaying = isPlaying;
+      this.syncMotionControls();
+      if (this.viewerState === 'ready') {
+        this.renderCurrentReadyState();
+      }
+    };
+    this.bvhMotionPlayer.onWarning = (warning) => {
+      if (!this.motionWarnings.includes(warning)) {
+        this.motionWarnings.push(warning);
+      }
+
+      if (this.viewerState === 'ready') {
+        this.renderCurrentReadyState();
       }
     };
 
@@ -289,6 +327,7 @@ export class AppController {
     this.lastLoadResult = null;
     this.sceneWarning = null;
     this.urdfLoadService.dispose();
+    this.sceneController.setModelUpAxis('+Z');
     this.sceneController.clearRobot();
     this.motionPlayer.attachRobot(null);
     this.clearMotionPlayback();
@@ -314,6 +353,7 @@ export class AppController {
 
     this.urdfLoadService.dispose();
     this.motionPlayer.dispose();
+    this.bvhMotionPlayer.dispose();
     this.sceneController.dispose();
   }
 
@@ -360,9 +400,15 @@ export class AppController {
       return;
     }
 
+    const bvhPaths = this.bvhMotionService.getAvailableBvhPaths(fileMap);
+    if (bvhPaths.length > 0) {
+      await this.loadBvhMotionFromDroppedFiles(fileMap);
+      return;
+    }
+
     this.setState('error', {
       title: 'No Supported Files',
-      detail: 'Drop URDF files or a motion CSV file.',
+      detail: 'Drop URDF model files, motion CSV, or BVH motion files.',
     });
   }
 
@@ -373,6 +419,7 @@ export class AppController {
 
     this.lastLoadResult = null;
     this.sceneWarning = null;
+    this.sceneController.setModelUpAxis('+Z');
     this.selectedUrdfPath = urdfPath;
     this.renderUrdfList();
     this.sceneController.clearRobot();
@@ -418,10 +465,13 @@ export class AppController {
         fileMap,
         loadedRobotResult.motionSchema,
       );
+      this.bvhMotionPlayer.load(null, null);
       this.motionPlayer.attachRobot(loadedRobotResult.robot);
       const bindingReport = this.motionPlayer.loadClip(result.clip);
 
       this.currentMotionClip = result.clip;
+      this.currentBvhMotion = null;
+      this.currentMotionKind = 'csv';
       this.currentMotionSourcePath = result.selectedCsvPath;
       this.motionWarnings = [...result.warnings];
       if (bindingReport.missingRootJoint) {
@@ -436,9 +486,64 @@ export class AppController {
         fps: result.clip.fps,
         timeSeconds: 0,
       };
-      this.motionPlayer.play();
+      this.playActiveMotion();
       this.syncMotionControls();
       this.renderReadyState(loadedRobotResult);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.setState('error', {
+        title: 'Motion Load Failed',
+        detail: reason,
+      });
+    }
+  }
+
+  private async loadBvhMotionFromDroppedFiles(fileMap: DroppedFileMap): Promise<void> {
+    this.setState('loading', {
+      detail: 'Loading motion BVH ...',
+    });
+
+    try {
+      const result = await this.bvhMotionService.loadFromDroppedFiles(fileMap);
+
+      this.lastLoadResult = null;
+      this.sceneWarning = null;
+      this.droppedFileMap = null;
+      this.availableUrdfPaths = [];
+      this.selectedUrdfPath = null;
+      this.urdfLoadService.dispose();
+      this.renderUrdfList();
+
+      this.sceneController.clearRobot();
+      this.sceneController.setModelUpAxis('+Y');
+      this.clearMotionPlayback();
+      this.sceneController.setRobot(result.sceneObject as unknown as LoadedRobotResult['robot']);
+      this.sceneController.setGeometryVisibility(this.showVisual, this.showCollision);
+
+      this.currentMotionClip = null;
+      this.currentBvhMotion = {
+        name: result.clip.name,
+        sourcePath: result.selectedBvhPath,
+        frameCount: result.frameCount,
+        fps: result.fps,
+        jointCount: result.jointCount,
+      };
+      this.currentMotionKind = 'bvh';
+      this.currentMotionSourcePath = result.selectedBvhPath;
+      this.motionWarnings = [...result.warnings];
+      this.motionFrameSnapshot = {
+        frameIndex: 0,
+        frameCount: result.frameCount,
+        fps: result.fps,
+        timeSeconds: 0,
+      };
+
+      this.bvhMotionPlayer.load(result.playbackTarget, result.clip);
+      this.sceneController.frameRobot();
+      this.sceneController.syncGroundToCurrentRobot();
+      this.playActiveMotion();
+      this.syncMotionControls();
+      this.renderBvhReadyState();
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       this.setState('error', {
@@ -451,12 +556,61 @@ export class AppController {
   private clearMotionPlayback(): void {
     this.motionPlayer.pause();
     this.motionPlayer.loadClip(null);
+    this.motionPlayer.attachRobot(null);
+    this.bvhMotionPlayer.pause();
+    this.bvhMotionPlayer.load(null, null);
     this.currentMotionClip = null;
+    this.currentBvhMotion = null;
+    this.currentMotionKind = null;
     this.currentMotionSourcePath = null;
     this.motionWarnings = [];
     this.motionFrameSnapshot = null;
     this.isMotionPlaying = false;
     this.syncMotionControls();
+  }
+
+  private hasAnyMotion(): boolean {
+    return this.currentMotionKind === 'csv' || this.currentMotionKind === 'bvh';
+  }
+
+  private playActiveMotion(): void {
+    if (this.currentMotionKind === 'csv') {
+      this.motionPlayer.play();
+      return;
+    }
+    if (this.currentMotionKind === 'bvh') {
+      this.bvhMotionPlayer.play();
+    }
+  }
+
+  private pauseActiveMotion(): void {
+    if (this.currentMotionKind === 'csv') {
+      this.motionPlayer.pause();
+      return;
+    }
+    if (this.currentMotionKind === 'bvh') {
+      this.bvhMotionPlayer.pause();
+    }
+  }
+
+  private resetActiveMotion(): void {
+    if (this.currentMotionKind === 'csv') {
+      this.motionPlayer.reset();
+      return;
+    }
+    if (this.currentMotionKind === 'bvh') {
+      this.bvhMotionPlayer.reset();
+    }
+  }
+
+  private seekActiveMotion(frameIndex: number): void {
+    if (this.currentMotionKind === 'csv') {
+      this.motionPlayer.seek(frameIndex);
+      return;
+    }
+    if (this.currentMotionKind === 'bvh') {
+      this.bvhMotionPlayer.seek(frameIndex);
+    }
   }
 
   private handleDragStateChange(isDragging: boolean): void {
@@ -471,6 +625,11 @@ export class AppController {
 
     if (this.lastLoadResult) {
       this.renderReadyState(this.lastLoadResult);
+      return;
+    }
+
+    if (this.currentMotionKind === 'bvh' && this.currentBvhMotion) {
+      this.renderBvhReadyState();
       return;
     }
 
@@ -511,7 +670,7 @@ export class AppController {
   private renderReadyState(result: LoadedRobotResult): void {
     const motionDetail = this.currentMotionClip
       ? ` Motion: ${this.currentMotionClip.name} (${this.currentMotionClip.frameCount} frames @ ${this.currentMotionClip.fps} FPS, ${this.isMotionPlaying ? 'playing' : 'paused'}). Drop CSV to replace motion.`
-      : ' Drop CSV to load motion.';
+      : ' Drop CSV to load motion, or drop BVH to switch into BVH preview mode.';
 
     const sourceDetail = this.currentMotionSourcePath
       ? ` Motion source: ${this.currentMotionSourcePath}.`
@@ -526,6 +685,41 @@ export class AppController {
       detail: `${result.jointCount} joints, ${result.linkCount} links, source: ${result.selectedUrdfPath}. Drop URDF to replace robot.${motionDetail}${sourceDetail}${viewModeDetail}`,
       warnings: this.collectReadyWarnings(result.warnings),
     });
+  }
+
+  private renderBvhReadyState(): void {
+    if (!this.currentBvhMotion) {
+      return;
+    }
+
+    const viewModeDetail =
+      this.viewMode === 'root_lock'
+        ? ' View mode: root lock (press Tab to switch).'
+        : ' View mode: free (press Tab to switch).';
+    const status = this.isMotionPlaying ? 'playing' : 'paused';
+    const detail =
+      `${this.currentBvhMotion.jointCount} animated joints, ` +
+      `${this.currentBvhMotion.frameCount} frames @ ${this.currentBvhMotion.fps.toFixed(2)} FPS, ` +
+      `${status}. Source: ${this.currentBvhMotion.sourcePath}. ` +
+      'Drop another BVH to replace motion, or drop URDF to return to robot mode.' +
+      viewModeDetail;
+
+    this.setState('ready', {
+      title: `Loaded ${this.currentBvhMotion.name}`,
+      detail,
+      warnings: this.collectReadyWarnings([]),
+    });
+  }
+
+  private renderCurrentReadyState(): void {
+    if (this.lastLoadResult) {
+      this.renderReadyState(this.lastLoadResult);
+      return;
+    }
+
+    if (this.currentMotionKind === 'bvh' && this.currentBvhMotion) {
+      this.renderBvhReadyState();
+    }
   }
 
   private collectReadyWarnings(robotWarnings: string[]): string[] {
@@ -547,12 +741,12 @@ export class AppController {
   }
 
   private syncMotionControls(): void {
-    const hasMotion = Boolean(this.currentMotionClip);
+    const hasMotion = this.hasAnyMotion();
     this.motionControlsSection.hidden = !hasMotion;
     this.motionPlayButton.disabled = !hasMotion;
     this.motionResetButton.disabled = !hasMotion;
 
-    if (!hasMotion || !this.currentMotionClip) {
+    if (!hasMotion) {
       this.motionPlayButton.textContent = 'Play';
       this.motionPlayButton.classList.remove('active');
       this.motionFrameSlider.min = '0';
@@ -566,12 +760,15 @@ export class AppController {
     this.motionPlayButton.textContent = this.isMotionPlaying ? 'Pause' : 'Play';
     this.motionPlayButton.classList.toggle('active', this.isMotionPlaying);
 
+    const defaultFrameCount = this.currentMotionClip?.frameCount ?? this.currentBvhMotion?.frameCount ?? 0;
+    const defaultFps = this.currentMotionClip?.fps ?? this.currentBvhMotion?.fps ?? 30;
+
     const snapshot =
       this.motionFrameSnapshot ??
       ({
         frameIndex: 0,
-        frameCount: this.currentMotionClip.frameCount,
-        fps: this.currentMotionClip.fps,
+        frameCount: defaultFrameCount,
+        fps: defaultFps,
         timeSeconds: 0,
       } as MotionFrameSnapshot);
 
@@ -581,8 +778,18 @@ export class AppController {
     this.motionFrameSlider.step = '1';
     this.motionFrameSlider.value = String(snapshot.frameIndex);
     this.motionFrameLabel.textContent = `Frame ${snapshot.frameIndex + 1} / ${snapshot.frameCount}`;
-    const jointCount = this.currentMotionClip.schema.jointNames.length;
-    this.motionName.textContent = `${this.currentMotionClip.name} · ${this.currentMotionClip.fps} FPS · ${this.currentMotionClip.sourceColumnCount} src cols -> ${this.currentMotionClip.stride} mapped cols (${jointCount} joints + root, ${this.currentMotionClip.csvMode})`;
+    if (this.currentMotionKind === 'csv' && this.currentMotionClip) {
+      const jointCount = this.currentMotionClip.schema.jointNames.length;
+      this.motionName.textContent = `${this.currentMotionClip.name} · ${this.currentMotionClip.fps} FPS · ${this.currentMotionClip.sourceColumnCount} src cols -> ${this.currentMotionClip.stride} mapped cols (${jointCount} joints + root, ${this.currentMotionClip.csvMode})`;
+      return;
+    }
+
+    if (this.currentMotionKind === 'bvh' && this.currentBvhMotion) {
+      this.motionName.textContent = `${this.currentBvhMotion.name} · ${this.currentBvhMotion.fps.toFixed(2)} FPS · ${this.currentBvhMotion.jointCount} joints (BVH)`;
+      return;
+    }
+
+    this.motionName.textContent = 'No motion loaded';
   }
 
   private toggleViewMode(): void {
@@ -590,8 +797,8 @@ export class AppController {
     this.sceneController.setViewMode(this.viewMode);
     this.syncShortcutPanel();
 
-    if (this.lastLoadResult && this.viewerState === 'ready') {
-      this.renderReadyState(this.lastLoadResult);
+    if (this.viewerState === 'ready') {
+      this.renderCurrentReadyState();
     }
   }
 

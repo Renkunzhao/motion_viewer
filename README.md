@@ -16,8 +16,16 @@ Its core purpose is to quickly load robot models in the browser and play motion 
 ## Current Scope
 
 - Stack: Vite + TypeScript + Three.js + urdf-loader
-- Implemented: URDF drag-and-drop loading, basic status panel, basic motion playback controls
+- Implemented: URDF drag-and-drop loading, CSV motion playback, BVH drag-and-drop playback, basic status panel, and playback controls
 - Typical use case: quick visual validation for local model and motion files
+
+## Supported Input And Operations
+
+- URDF (.urdf): drag and drop folder/multi-file set, or use Select Folder/Select Files
+- CSV (.csv): drop after URDF is loaded to drive robot joints
+- BVH (.bvh): drag and drop to play in BVH preview mode
+- BVH playback uses Y-up orientation and auto-recenters first-frame root X/Z offset
+- Controls: `Space` play/pause, `R` reset to frame 1, `Tab` switch view mode, slider seek
 
 ## Robot Support
 
@@ -27,7 +35,7 @@ Its core purpose is to quickly load robot models in the browser and play motion 
   - Header-based mapping by joint names
   - Ordered mapping using URDF non-fixed joint declaration order
 
-## Data Types (Target Support)
+## Data Types (Current + Target)
 
 ### Models
 
@@ -37,9 +45,9 @@ Its core purpose is to quickly load robot models in the browser and play motion 
 
 ### Motions
 
-- CSV (.csv)
+- CSV (.csv) [Implemented]
 - NumPy NPZ (.npz)
-- BVH (.bvh)
+- BVH (.bvh) [Implemented]
 - FBX (.fbx)
 
 ## References
