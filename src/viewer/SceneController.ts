@@ -26,6 +26,7 @@ import type { UrdfRobotLike } from '../types/viewer';
 
 const HALF_PI = Math.PI / 2;
 const GRID_BASE_SIZE = 20;
+const MIN_GRID_COVERAGE = 30;
 const DEFAULT_FIT_OFFSET = 1.8;
 const KEY_LIGHT_OFFSET = new Vector3(4, 10, 1);
 const DARK_COLOR_EPSILON = 0.06;
@@ -103,12 +104,12 @@ export function computeCameraDistance(
 
 export function computeGridScale(maxDimension: number, baseSize = GRID_BASE_SIZE): number {
   if (!Number.isFinite(maxDimension) || maxDimension <= 0) {
-    return 1;
+    return MIN_GRID_COVERAGE / baseSize;
   }
 
-  const desiredCoverage = Math.max(maxDimension * 2.2, 2);
+  const desiredCoverage = Math.max(maxDimension * 3.2, MIN_GRID_COVERAGE);
   const rawScale = desiredCoverage / baseSize;
-  return clamp(rawScale, 0.2, 30);
+  return clamp(rawScale, MIN_GRID_COVERAGE / baseSize, 40);
 }
 
 export function evaluateScaleWarning(maxDimension: number): string | null {

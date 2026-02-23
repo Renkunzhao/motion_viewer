@@ -16,9 +16,9 @@ describe('SceneController math helpers', () => {
   });
 
   it('computes bounded grid scale from model size', () => {
-    expect(computeGridScale(1.0)).toBeCloseTo(0.2, 5);
-    expect(computeGridScale(6.0)).toBeCloseTo(0.66, 2);
-    expect(computeGridScale(80.0)).toBeCloseTo(8.8, 1);
+    expect(computeGridScale(1.0)).toBeCloseTo(1.5, 5);
+    expect(computeGridScale(6.0)).toBeCloseTo(1.5, 5);
+    expect(computeGridScale(80.0)).toBeCloseTo(12.8, 1);
   });
 
   it('maps +Z model up-axis to Y-up scene rotation', () => {
