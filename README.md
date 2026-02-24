@@ -58,14 +58,6 @@ After editing presets/assets, rebuild and redeploy static files:
 
 - `npm run build`
 
-## Robot Support
-
-- Verified support: Unitree `G1`, `H1`, `H1-2`
-- Motion CSV parsing is now URDF-driven (joint mapping is not hardcoded to G1)
-- Supports both CSV modes:
-  - Header-based mapping by joint names
-  - Ordered mapping using URDF non-fixed joint declaration order
-
 ## Data Types (Current + Target)
 
 ### Models
@@ -80,6 +72,19 @@ After editing presets/assets, rebuild and redeploy static files:
 - NumPy NPZ (.npz)
 - BVH (.bvh) [Implemented]
 - FBX (.fbx)
+
+## Robot Support
+
+- Verified support: Unitree `G1`, `H1`, `H1-2`
+- Motion CSV parsing is now URDF-driven (joint mapping is not hardcoded to G1)
+- Supports both CSV modes:
+  - Header-based mapping by joint names
+  - Ordered mapping using URDF non-fixed joint declaration order
+
+## Motion Support
+- [LAFAN1](https://github.com/ubisoft/ubisoft-laforge-animation-dataset.git)
+- [lafan1-resolved](https://github.com/orangeduck/lafan1-resolved.git)
+- [unitree-LAFAN1-Retarget](https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset/tree/main)
 
 ## References
 
