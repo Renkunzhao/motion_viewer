@@ -4,6 +4,9 @@ import { BVHLoader } from 'three/examples/jsm/loaders/BVHLoader.js';
 import type { DroppedFileMap } from '../../types/viewer';
 import { getBaseName, getPathDepth, normalizePath } from '../urdf/pathResolver';
 
+export const BVH_LINEAR_UNITS = ['m', 'dm', 'cm', 'inch', 'feet'] as const;
+export type BvhLinearUnit = (typeof BVH_LINEAR_UNITS)[number];
+
 export interface BvhMotionLoadResult {
   clip: any;
   selectedBvhPath: string;
@@ -12,7 +15,24 @@ export interface BvhMotionLoadResult {
   frameCount: number;
   fps: number;
   jointCount: number;
+  linearUnit: BvhLinearUnit;
+  unitScale: number;
   warnings: string[];
+}
+
+const BVH_UNIT_SCALE: Record<BvhLinearUnit, number> = {
+  m: 1,
+  dm: 0.1,
+  cm: 0.01,
+  inch: 0.0254,
+  feet: 0.3048,
+};
+
+function normalizeLinearUnit(linearUnit: BvhLinearUnit): BvhLinearUnit {
+  if (BVH_LINEAR_UNITS.includes(linearUnit)) {
+    return linearUnit;
+  }
+  return 'm';
 }
 
 interface ParsedTiming {
@@ -151,7 +171,10 @@ export class BvhMotionService {
   async loadFromDroppedFiles(
     fileMap: DroppedFileMap,
     preferredBvhPath?: string,
+    linearUnit: BvhLinearUnit = 'm',
   ): Promise<BvhMotionLoadResult> {
+    const safeLinearUnit = normalizeLinearUnit(linearUnit);
+    const unitScale = BVH_UNIT_SCALE[safeLinearUnit];
     const bvhPaths = this.getAvailableBvhPaths(fileMap);
     let selectedBvhPath: string | null = null;
 
@@ -205,6 +228,9 @@ export class BvhMotionService {
 
     const sceneObject = new Group();
     sceneObject.name = `${clipName}-root`;
+    sceneObject.scale.setScalar(unitScale);
+    sceneObject.userData.bvhLinearUnit = safeLinearUnit;
+    sceneObject.userData.bvhUnitScale = unitScale;
     // Expose the animated BVH root for camera root-lock tracking.
     sceneObject.userData.rootTrackNode = rootBone;
     sceneObject.add(rootBone);
@@ -223,6 +249,8 @@ export class BvhMotionService {
       frameCount: timing.frameCount,
       fps: timing.fps,
       jointCount,
+      linearUnit: safeLinearUnit,
+      unitScale,
       warnings: [...warnings],
     };
   }

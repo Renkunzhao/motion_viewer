@@ -7,7 +7,11 @@ import type {
 } from '../types/viewer';
 import { dataTransferToFileMap, fileListToFileMap } from '../io/drop/dataTransferToFileMap';
 import { registerDropHandlers } from '../io/drop/registerDropHandlers';
-import { BvhMotionService } from '../io/motion/BvhMotionService';
+import {
+  BVH_LINEAR_UNITS,
+  BvhMotionService,
+  type BvhLinearUnit,
+} from '../io/motion/BvhMotionService';
 import { CsvMotionService } from '../io/motion/CsvMotionService';
 import { getBaseName, normalizePath } from '../io/urdf/pathResolver';
 import { UrdfLoadService } from '../io/urdf/UrdfLoadService';
@@ -23,6 +27,10 @@ function requireElement<T extends HTMLElement>(id: string): T {
   }
 
   return element as T;
+}
+
+function isBvhLinearUnit(value: string): value is BvhLinearUnit {
+  return BVH_LINEAR_UNITS.includes(value as BvhLinearUnit);
 }
 
 interface PresetAssetFile {
@@ -260,6 +268,8 @@ export class AppController {
   private readonly motionResetButton: HTMLButtonElement;
   private readonly motionFpsControl: HTMLDivElement;
   private readonly motionFpsInput: HTMLInputElement;
+  private readonly bvhUnitControl: HTMLDivElement;
+  private readonly bvhUnitSelect: HTMLSelectElement;
   private readonly motionFrameSlider: HTMLInputElement;
   private readonly motionFrameLabel: HTMLSpanElement;
   private readonly motionName: HTMLParagraphElement;
@@ -292,13 +302,16 @@ export class AppController {
         frameCount: number;
         fps: number;
         jointCount: number;
+        linearUnit: BvhLinearUnit;
       }
     | null = null;
+  private currentBvhFileMap: DroppedFileMap | null = null;
   private currentMotionKind: 'csv' | 'bvh' | null = null;
   private currentMotionSourcePath: string | null = null;
   private motionWarnings: string[] = [];
   private motionFrameSnapshot: MotionFrameSnapshot | null = null;
   private isMotionPlaying = false;
+  private bvhLinearUnit: BvhLinearUnit = 'm';
   private viewMode: ViewMode = 'free';
   private recoverReadyTimer: number | null = null;
   private recoverableDropHint: string | null = null;
@@ -464,6 +477,34 @@ export class AppController {
     this.syncMotionFpsInput();
   };
 
+  private readonly onBvhUnitChange = (): void => {
+    if (this.viewerState === 'loading') {
+      return;
+    }
+
+    const selectedValue = this.bvhUnitSelect.value;
+    if (!isBvhLinearUnit(selectedValue)) {
+      this.bvhUnitSelect.value = this.bvhLinearUnit;
+      return;
+    }
+
+    const nextUnit = selectedValue;
+    if (nextUnit === this.bvhLinearUnit) {
+      return;
+    }
+
+    if (this.currentMotionKind === 'bvh' && this.currentBvhFileMap) {
+      void this.reloadCurrentBvhWithUnit(nextUnit);
+      return;
+    }
+
+    this.bvhLinearUnit = nextUnit;
+    this.syncMotionControls();
+    if (this.viewerState === 'ready') {
+      this.renderCurrentReadyState();
+    }
+  };
+
   constructor() {
     this.appRoot = requireElement<HTMLDivElement>('app');
     const canvas = requireElement<HTMLCanvasElement>('viewer-canvas');
@@ -481,6 +522,8 @@ export class AppController {
     this.motionResetButton = requireElement<HTMLButtonElement>('motion-reset-btn');
     this.motionFpsControl = requireElement<HTMLDivElement>('motion-fps-control');
     this.motionFpsInput = requireElement<HTMLInputElement>('motion-fps-input');
+    this.bvhUnitControl = requireElement<HTMLDivElement>('bvh-unit-control');
+    this.bvhUnitSelect = requireElement<HTMLSelectElement>('bvh-unit-select');
     this.motionFrameSlider = requireElement<HTMLInputElement>('motion-frame-slider');
     this.motionFrameLabel = requireElement<HTMLSpanElement>('motion-frame-label');
     this.motionName = requireElement<HTMLParagraphElement>('motion-name');
@@ -574,6 +617,7 @@ export class AppController {
     this.motionResetButton.addEventListener('click', this.onMotionResetClick);
     this.motionFpsInput.addEventListener('input', this.onMotionFpsInput);
     this.motionFpsInput.addEventListener('change', this.onMotionFpsChange);
+    this.bvhUnitSelect.addEventListener('change', this.onBvhUnitChange);
     this.motionFrameSlider.addEventListener('input', this.onMotionFrameInput);
 
     this.syncVisibilityButtons();
@@ -625,6 +669,7 @@ export class AppController {
     this.motionResetButton.removeEventListener('click', this.onMotionResetClick);
     this.motionFpsInput.removeEventListener('input', this.onMotionFpsInput);
     this.motionFpsInput.removeEventListener('change', this.onMotionFpsChange);
+    this.bvhUnitSelect.removeEventListener('change', this.onBvhUnitChange);
     this.motionFrameSlider.removeEventListener('input', this.onMotionFrameInput);
 
     this.urdfLoadService.dispose();
@@ -752,6 +797,7 @@ export class AppController {
 
       this.currentMotionClip = result.clip;
       this.currentBvhMotion = null;
+      this.currentBvhFileMap = null;
       this.currentMotionKind = 'csv';
       this.currentMotionSourcePath = result.selectedCsvPath;
       this.motionWarnings = [...result.warnings];
@@ -783,13 +829,18 @@ export class AppController {
   private async loadBvhMotionFromDroppedFiles(
     fileMap: DroppedFileMap,
     preferredBvhPath?: string,
+    linearUnit: BvhLinearUnit = this.bvhLinearUnit,
   ): Promise<void> {
     this.setState('loading', {
       detail: 'Loading motion BVH ...',
     });
 
     try {
-      const result = await this.bvhMotionService.loadFromDroppedFiles(fileMap, preferredBvhPath);
+      const result = await this.bvhMotionService.loadFromDroppedFiles(
+        fileMap,
+        preferredBvhPath,
+        linearUnit,
+      );
 
       this.lastLoadResult = null;
       this.sceneWarning = null;
@@ -812,7 +863,10 @@ export class AppController {
         frameCount: result.frameCount,
         fps: result.fps,
         jointCount: result.jointCount,
+        linearUnit: result.linearUnit,
       };
+      this.currentBvhFileMap = fileMap;
+      this.bvhLinearUnit = result.linearUnit;
       this.currentMotionKind = 'bvh';
       this.currentMotionSourcePath = result.selectedBvhPath;
       this.motionWarnings = [...result.warnings];
@@ -847,12 +901,24 @@ export class AppController {
     this.bvhMotionPlayer.load(null, null);
     this.currentMotionClip = null;
     this.currentBvhMotion = null;
+    this.currentBvhFileMap = null;
     this.currentMotionKind = null;
     this.currentMotionSourcePath = null;
     this.motionWarnings = [];
     this.motionFrameSnapshot = null;
     this.isMotionPlaying = false;
     this.syncMotionControls();
+  }
+
+  private async reloadCurrentBvhWithUnit(nextUnit: BvhLinearUnit): Promise<void> {
+    if (!this.currentBvhFileMap) {
+      this.bvhLinearUnit = nextUnit;
+      this.syncMotionControls();
+      return;
+    }
+
+    const preferredBvhPath = this.currentMotionSourcePath ?? undefined;
+    await this.loadBvhMotionFromDroppedFiles(this.currentBvhFileMap, preferredBvhPath, nextUnit);
   }
 
   private hasAnyMotion(): boolean {
@@ -993,7 +1059,7 @@ export class AppController {
     const detail =
       `${this.currentBvhMotion.jointCount} animated joints, ` +
       `${this.currentBvhMotion.frameCount} frames @ ${this.currentBvhMotion.fps.toFixed(2)} FPS, ` +
-      `${status}. Source: ${this.currentBvhMotion.sourcePath}. ` +
+      `${status}. Unit: ${this.currentBvhMotion.linearUnit}. Source: ${this.currentBvhMotion.sourcePath}. ` +
       'Drop another BVH to replace motion, or drop URDF to return to robot mode.' +
       viewModeDetail;
 
@@ -1114,6 +1180,14 @@ export class AppController {
     this.motionFpsInput.value = '30';
   }
 
+  private syncBvhUnitControl(): void {
+    const isBvhMode = this.currentMotionKind === 'bvh';
+    this.bvhUnitControl.hidden = !isBvhMode;
+    this.bvhUnitSelect.disabled = !isBvhMode;
+    this.bvhUnitSelect.value = this.bvhLinearUnit;
+    this.bvhUnitSelect.title = `Current BVH unit is ${this.bvhLinearUnit}.`;
+  }
+
   private syncVisibilityButtons(): void {
     this.showVisualButton.classList.toggle('active', this.showVisual);
     this.showCollisionButton.classList.toggle('active', this.showCollision);
@@ -1134,6 +1208,7 @@ export class AppController {
       this.motionFrameLabel.textContent = 'Frame 0 / 0';
       this.motionName.textContent = 'No motion loaded';
       this.syncMotionFpsInput();
+      this.syncBvhUnitControl();
       return;
     }
 
@@ -1162,17 +1237,22 @@ export class AppController {
       const jointCount = this.currentMotionClip.schema.jointNames.length;
       this.motionName.textContent = `${this.currentMotionClip.name} · ${this.currentMotionClip.fps} FPS · ${this.currentMotionClip.sourceColumnCount} src cols -> ${this.currentMotionClip.stride} mapped cols (${jointCount} joints + root, ${this.currentMotionClip.csvMode})`;
       this.syncMotionFpsInput();
+      this.syncBvhUnitControl();
       return;
     }
 
     if (this.currentMotionKind === 'bvh' && this.currentBvhMotion) {
-      this.motionName.textContent = `${this.currentBvhMotion.name} · ${this.currentBvhMotion.fps.toFixed(2)} FPS · ${this.currentBvhMotion.jointCount} joints (BVH)`;
+      this.motionName.textContent =
+        `${this.currentBvhMotion.name} · ${this.currentBvhMotion.fps.toFixed(2)} FPS · ` +
+        `${this.currentBvhMotion.jointCount} joints (BVH, ${this.currentBvhMotion.linearUnit})`;
       this.syncMotionFpsInput();
+      this.syncBvhUnitControl();
       return;
     }
 
     this.motionName.textContent = 'No motion loaded';
     this.syncMotionFpsInput();
+    this.syncBvhUnitControl();
   }
 
   private toggleViewMode(): void {

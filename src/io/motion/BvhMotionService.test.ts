@@ -76,9 +76,35 @@ describe('BvhMotionService', () => {
     expect(result.frameCount).toBe(2);
     expect(result.fps).toBeCloseTo(30, 3);
     expect(result.jointCount).toBe(2);
+    expect(result.linearUnit).toBe('m');
+    expect(result.unitScale).toBeCloseTo(1, 8);
+    expect(result.sceneObject.scale.x).toBeCloseTo(1, 8);
     expect(result.sceneObject.children.length).toBe(2);
     expect(result.sceneObject.userData.rootTrackNode).toBe(result.playbackTarget.skeleton.bones[0]);
     expect(result.playbackTarget.skeleton.bones.length).toBeGreaterThan(0);
+  });
+
+  it('applies requested unit scaling when requested', async () => {
+    const service = new BvhMotionService();
+    const fileMap = buildFileMap({
+      'motions/walk_units.bvh': SIMPLE_BVH,
+    });
+
+    const expectedScales: Array<{ unit: 'dm' | 'cm' | 'inch' | 'feet'; scale: number }> = [
+      { unit: 'dm', scale: 0.1 },
+      { unit: 'cm', scale: 0.01 },
+      { unit: 'inch', scale: 0.0254 },
+      { unit: 'feet', scale: 0.3048 },
+    ];
+
+    for (const item of expectedScales) {
+      const result = await service.loadFromDroppedFiles(fileMap, undefined, item.unit);
+      expect(result.linearUnit).toBe(item.unit);
+      expect(result.unitScale).toBeCloseTo(item.scale, 8);
+      expect(result.sceneObject.scale.x).toBeCloseTo(item.scale, 8);
+      expect(result.sceneObject.scale.y).toBeCloseTo(item.scale, 8);
+      expect(result.sceneObject.scale.z).toBeCloseTo(item.scale, 8);
+    }
   });
 
   it('recenters root XZ by the first frame position', async () => {
