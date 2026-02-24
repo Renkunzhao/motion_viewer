@@ -5,7 +5,7 @@
       "label": "Unitree G1 + CSV dance1_subject1",
       "description": "G1 URDF with LAFAN1 retargeted CSV motion.",
       "model": {
-        "urdfPath": "presets/robots/g1/g1_29dof_rev_1_0.urdf"
+        "urdfPath": "presets/models/g1/g1_29dof_rev_1_0.urdf"
       },
       "motion": {
         "kind": "csv",
@@ -17,7 +17,7 @@
       "label": "Unitree H1 + CSV dance1_subject1",
       "description": "H1 URDF with LAFAN1 retargeted CSV motion.",
       "model": {
-        "urdfPath": "presets/robots/h1/h1.urdf"
+        "urdfPath": "presets/models/h1/h1.urdf"
       },
       "motion": {
         "kind": "csv",
@@ -29,7 +29,7 @@
       "label": "Unitree H1-2 + CSV dance1_subject1",
       "description": "H1-2 URDF with LAFAN1 retargeted CSV motion.",
       "model": {
-        "urdfPath": "presets/robots/h1_2/h1_2_wo_hand.urdf"
+        "urdfPath": "presets/models/h1_2/h1_2_wo_hand.urdf"
       },
       "motion": {
         "kind": "csv",

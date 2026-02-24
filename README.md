@@ -39,11 +39,11 @@ The viewer can ship built-in model/motion assets for static hosting (GitHub Page
 Visitors can open the site and load presets directly from the dropdown without cloning the repo.
 
 - Preset manifest: `public/presets/presets.json`
-- Bundled preset assets: `public/presets/robots/*` and `public/presets/motions/*`
+- Bundled preset assets: `public/presets/models/*` and `public/presets/motions/*`
 
 Each preset can define:
 
-- `model` (recommended): `urdfPath` only, e.g. `presets/robots/g1/g1_29dof_rev_1_0.urdf`
+- `model` (recommended): `urdfPath` only, e.g. `presets/models/g1/g1_29dof_rev_1_0.urdf`
 - `motion` (recommended): `kind: "csv" | "bvh"` + `path`
 - Legacy format is still supported:
   - `model.files[]` with optional `selectedUrdfPath`
@@ -52,7 +52,7 @@ Each preset can define:
 Notes:
 
 - `model.urdfPath` mode no longer requires listing every mesh file in `presets.json`; mesh resources are resolved by URL relative to the URDF location.
-- This is better for large robot assets copied directly into `public/presets/robots/*`.
+- This is better for large robot assets copied directly into `public/presets/models/*`.
 
 After editing presets/assets, rebuild and redeploy static files:
 

@@ -9,10 +9,11 @@
 ## Required workflow
 - Provide a brief plan first (files to touch + validation steps), then make changes.
 - When adding new features, do not break existing functionality or workflows unless I explicitly request it.
+- Use README.md to understand existing funionality.
 - Add comments where helpful for future maintenance and readability, but keep the implementation as simple and non-redundant as possible.
 
 - `ref/` contains open-source reference repositories with functionality similar to this project; when implementing features, prefer searching `ref/` first for related examples/implementations.
-- `robots/` and `motions/` store robot model files and motion files, respectively; consult them when you need concrete asset formats, conventions, or example data.
+- `models/` and `motions/` store robot model files and motion files, respectively; consult them when you need concrete asset formats, conventions, or example data.
 - Reference index: see the project list/short descriptions in `https://github.com/Renkunzhao/legged-robotics-lab/blob/main/README.md` for ideas of similar repos to consult.
 - These folders can be large: search and read on-demand only (open only the few files relevant to the current task), and do not blindly scan/load entire directories.
 

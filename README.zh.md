@@ -39,11 +39,11 @@
 访问者打开网页后，可直接通过下拉框加载预置，无需 clone 仓库或本地运行。
 
 - 预置清单：`public/presets/presets.json`
-- 预置资源目录：`public/presets/robots/*` 与 `public/presets/motions/*`
+- 预置资源目录：`public/presets/models/*` 与 `public/presets/motions/*`
 
 每个 preset 可包含：
 
-- `model`（推荐）：仅配置 `urdfPath`，例如 `presets/robots/g1/g1_29dof_rev_1_0.urdf`
+- `model`（推荐）：仅配置 `urdfPath`，例如 `presets/models/g1/g1_29dof_rev_1_0.urdf`
 - `motion`（推荐）：配置 `kind: "csv" | "bvh"` 与 `path`
 - 旧格式仍兼容：`model.files[]`（可选 `selectedUrdfPath`）
 - 旧格式仍兼容：`motion.files[]`（可选 `selectedMotionPath`）
@@ -51,7 +51,7 @@
 说明：
 
 - 使用 `model.urdfPath` 时，不再需要在 `presets.json` 里手工列出所有 mesh 文件。
-- mesh 资源会按 URDF 所在路径做 URL 相对解析，更适合把大体积机器人资源直接放进 `public/presets/robots/*`。
+- mesh 资源会按 URDF 所在路径做 URL 相对解析，更适合把大体积机器人资源直接放进 `public/presets/models/*`。
 
 修改预置后，重新构建并部署静态文件：
 
