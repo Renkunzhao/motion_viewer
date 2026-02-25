@@ -29,9 +29,15 @@ const GRID_BASE_SIZE = 20;
 const MIN_GRID_COVERAGE = 30;
 const DEFAULT_FIT_OFFSET = 1.8;
 const INITIAL_GROUND_SYNC_FRAMES = 90;
-const KEY_LIGHT_OFFSET = new Vector3(4, 10, 1);
+const DEFAULT_KEY_LIGHT_OFFSET = new Vector3(4, 10, 1);
+const SMPL_KEY_LIGHT_OFFSET = new Vector3(3.6, 5.8, 2.6);
+const DEFAULT_FILL_LIGHT_POSITION = new Vector3(-2.2, 3.1, -2.4);
+const DEFAULT_RIM_LIGHT_POSITION = new Vector3(0, 4, -5);
+const SMPL_FILL_LIGHT_OFFSET = new Vector3(-3.1, 3.6, 2.7);
+const SMPL_RIM_LIGHT_OFFSET = new Vector3(2.8, 2.9, -3.0);
 const DARK_COLOR_EPSILON = 0.06;
 const ROOT_TRACK_JOINT_NAME = 'floating_base_joint';
+type SceneVisualProfile = 'default' | 'smpl';
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -139,7 +145,10 @@ export class SceneController {
   private readonly controls: any;
   private readonly canvas: HTMLCanvasElement;
   private readonly modelRoot: any;
+  private readonly hemisphereLight: any;
   private readonly keyLight: any;
+  private readonly fillLight: any;
+  private readonly rimLight: any;
   private readonly keyLightOffset: any;
   private readonly groundPlane: any;
   private readonly referenceGrid: any;
@@ -152,6 +161,7 @@ export class SceneController {
   private viewMode: ViewMode = 'free';
   private showVisual = true;
   private showCollision = false;
+  private currentVisualProfile: SceneVisualProfile = 'default';
   private animationFrameId = 0;
   private readonly tempTrackTarget = new Vector3();
   private readonly tempCameraOffset = new Vector3();
@@ -201,11 +211,11 @@ export class SceneController {
     this.environmentMapTarget = this.pmremGenerator.fromScene(envScene, 0.05);
     this.scene.environment = this.environmentMapTarget.texture;
 
-    const hemisphere = new HemisphereLight('#ffffff', '#21313d', 0.55);
-    hemisphere.position.set(0, 1, 0);
-    this.scene.add(hemisphere);
+    this.hemisphereLight = new HemisphereLight('#ffffff', '#21313d', 0.55);
+    this.hemisphereLight.position.set(0, 1, 0);
+    this.scene.add(this.hemisphereLight);
 
-    this.keyLightOffset = KEY_LIGHT_OFFSET.clone();
+    this.keyLightOffset = DEFAULT_KEY_LIGHT_OFFSET.clone();
     this.keyLight = new DirectionalLight('#ffffff', Math.PI);
     this.keyLight.position.copy(this.keyLightOffset);
     this.keyLight.castShadow = true;
@@ -216,13 +226,13 @@ export class SceneController {
     this.scene.add(this.keyLight);
     this.scene.add(this.keyLight.target);
 
-    const fillLight = new DirectionalLight('#d2e8ff', Math.PI * 0.34);
-    fillLight.position.set(-2.2, 3.1, -2.4);
-    this.scene.add(fillLight);
+    this.fillLight = new DirectionalLight('#d2e8ff', Math.PI * 0.34);
+    this.fillLight.position.copy(DEFAULT_FILL_LIGHT_POSITION);
+    this.scene.add(this.fillLight);
 
-    const rimLight = new DirectionalLight('#9ec9ff', Math.PI * 0.14);
-    rimLight.position.set(0, 4, -5);
-    this.scene.add(rimLight);
+    this.rimLight = new DirectionalLight('#9ec9ff', Math.PI * 0.14);
+    this.rimLight.position.copy(DEFAULT_RIM_LIGHT_POSITION);
+    this.scene.add(this.rimLight);
 
     this.modelRoot = new Group();
     this.modelRoot.name = 'model-root';
@@ -256,6 +266,7 @@ export class SceneController {
     this.scene.add(this.referenceGrid);
 
     this.setModelUpAxis('+Z');
+    this.setVisualProfile('default');
 
     this.animate = this.animate.bind(this);
     this.animate();
@@ -271,6 +282,78 @@ export class SceneController {
     this.viewMode = mode;
     if (mode === 'root_lock') {
       this.syncViewToCurrentRobot();
+    }
+  }
+
+  setVisualProfile(profile: SceneVisualProfile): void {
+    this.currentVisualProfile = profile;
+    const groundMaterial = this.groundPlane.material as any;
+
+    if (profile === 'smpl') {
+      this.scene.background = new Color('#07121a');
+      this.scene.environment = this.environmentMapTarget.texture;
+      this.renderer.toneMappingExposure = 1.0;
+
+      this.hemisphereLight.color.set('#ffffff');
+      this.hemisphereLight.groundColor.set('#d4d4d4');
+      this.hemisphereLight.intensity = 0.82;
+
+      this.keyLight.color.set('#fffdf8');
+      this.keyLight.intensity = 1.38;
+      this.keyLightOffset.copy(SMPL_KEY_LIGHT_OFFSET);
+
+      this.fillLight.color.set('#ffffff');
+      this.fillLight.intensity = 1.08;
+
+      this.rimLight.color.set('#fff6ef');
+      this.rimLight.intensity = 0.82;
+
+      this.referenceGrid.visible = true;
+      if (groundMaterial) {
+        groundMaterial.opacity = 0.24;
+        groundMaterial.color?.set?.('#000000');
+        groundMaterial.needsUpdate = true;
+      }
+    } else {
+      this.scene.background = new Color('#07121a');
+      this.scene.environment = this.environmentMapTarget.texture;
+      this.renderer.toneMappingExposure = 1.0;
+
+      this.hemisphereLight.color.set('#ffffff');
+      this.hemisphereLight.groundColor.set('#21313d');
+      this.hemisphereLight.intensity = 0.55;
+
+      this.keyLight.color.set('#ffffff');
+      this.keyLight.intensity = Math.PI;
+      this.keyLightOffset.copy(DEFAULT_KEY_LIGHT_OFFSET);
+
+      this.fillLight.color.set('#d2e8ff');
+      this.fillLight.intensity = Math.PI * 0.34;
+      this.fillLight.position.copy(DEFAULT_FILL_LIGHT_POSITION);
+
+      this.rimLight.color.set('#9ec9ff');
+      this.rimLight.intensity = Math.PI * 0.14;
+      this.rimLight.position.copy(DEFAULT_RIM_LIGHT_POSITION);
+
+      this.referenceGrid.visible = true;
+      if (groundMaterial) {
+        groundMaterial.opacity = 0.24;
+        groundMaterial.color?.set?.('#000000');
+        groundMaterial.needsUpdate = true;
+      }
+    }
+
+    if (this.currentRobot) {
+      const box = this.computeRobotBounds(this.currentRobot);
+      if (box) {
+        const center = box.getCenter(new Vector3());
+        this.updateKeyLightForBounds(box, center);
+        this.updateGroundAndGrid(box);
+      }
+    } else {
+      this.keyLight.position.copy(this.keyLightOffset);
+      this.keyLight.target.position.set(0, 0, 0);
+      this.keyLight.target.updateMatrixWorld();
     }
   }
 
@@ -468,6 +551,12 @@ export class SceneController {
       const isColliderMesh = isWithinUrdfCollider(maybeMesh);
       if (isColliderMesh) {
         this.applyCollisionMaterial(maybeMesh);
+        return;
+      }
+
+      if (maybeMesh.userData?.skipMaterialEnhance) {
+        maybeMesh.castShadow = maybeMesh.userData.castShadow ?? true;
+        maybeMesh.receiveShadow = maybeMesh.userData.receiveShadow ?? true;
         return;
       }
 
@@ -696,6 +785,12 @@ export class SceneController {
     this.keyLight.target.position.copy(center);
     this.keyLight.position.copy(center).add(this.keyLightOffset);
     this.keyLight.target.updateMatrixWorld();
+
+    if (this.currentVisualProfile === 'smpl') {
+      this.fillLight.position.copy(center).add(SMPL_FILL_LIGHT_OFFSET);
+      this.rimLight.position.copy(center).add(SMPL_RIM_LIGHT_OFFSET);
+    }
+
     shadowCamera.updateProjectionMatrix();
   }
 

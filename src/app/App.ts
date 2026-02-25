@@ -13,10 +13,12 @@ import {
   type BvhLinearUnit,
 } from '../io/motion/BvhMotionService';
 import { CsvMotionService } from '../io/motion/CsvMotionService';
+import { SmplMotionService } from '../io/motion/SmplMotionService';
 import { getBaseName, normalizePath } from '../io/urdf/pathResolver';
 import { UrdfLoadService } from '../io/urdf/UrdfLoadService';
 import { BvhMotionPlayer } from '../motion/BvhMotionPlayer';
 import { G1MotionPlayer, type MotionFrameSnapshot } from '../motion/G1MotionPlayer';
+import { SmplMotionPlayer } from '../motion/SmplMotionPlayer';
 import { SceneController } from '../viewer/SceneController';
 import { getStateCopy } from './state';
 
@@ -45,7 +47,7 @@ interface PresetModelDefinition {
 }
 
 interface PresetMotionDefinition {
-  kind: 'csv' | 'bvh';
+  kind: 'csv' | 'bvh' | 'smpl';
   files?: PresetAssetFile[];
   path?: string;
   selectedMotionPath?: string;
@@ -206,8 +208,8 @@ function parsePresetManifest(value: unknown): ViewerPresetManifest {
       }
 
       const kind = parseNonEmptyString(item.motion.kind, `presets[${index}].motion.kind`).toLowerCase();
-      if (kind !== 'csv' && kind !== 'bvh') {
-        throw new Error(`presets[${index}].motion.kind must be "csv" or "bvh".`);
+      if (kind !== 'csv' && kind !== 'bvh' && kind !== 'smpl') {
+        throw new Error(`presets[${index}].motion.kind must be "csv", "bvh", or "smpl".`);
       }
 
       motion = {
@@ -252,8 +254,10 @@ export class AppController {
   private readonly urdfLoadService: UrdfLoadService;
   private readonly csvMotionService: CsvMotionService;
   private readonly bvhMotionService: BvhMotionService;
+  private readonly smplMotionService: SmplMotionService;
   private readonly motionPlayer: G1MotionPlayer;
   private readonly bvhMotionPlayer: BvhMotionPlayer;
+  private readonly smplMotionPlayer: SmplMotionPlayer;
   private readonly dropHint: HTMLParagraphElement;
   private readonly stateChip: HTMLSpanElement;
   private readonly statusTitle: HTMLElement;
@@ -306,13 +310,41 @@ export class AppController {
       }
     | null = null;
   private currentBvhFileMap: DroppedFileMap | null = null;
-  private currentMotionKind: 'csv' | 'bvh' | null = null;
+  private currentSmplModel:
+    | {
+        modelName: string;
+        modelSourcePath: string;
+        jointCount: number;
+        vertexCount: number;
+      }
+    | null = null;
+  private currentSmplMotion:
+    | {
+        modelName: string;
+        modelSourcePath: string;
+        motionName: string;
+        motionSourcePath: string;
+        frameCount: number;
+        fps: number;
+        jointCount: number;
+        vertexCount: number;
+      }
+    | null = null;
+  private currentSmplFileMap: DroppedFileMap | null = null;
+  private currentMotionKind: 'csv' | 'bvh' | 'smpl' | null = null;
   private currentMotionSourcePath: string | null = null;
   private motionWarnings: string[] = [];
   private motionFrameSnapshot: MotionFrameSnapshot | null = null;
   private isMotionPlaying = false;
   private bvhLinearUnit: BvhLinearUnit = 'm';
   private viewMode: ViewMode = 'free';
+  private smplDisplayMode: 'mesh' | 'skeleton' = 'mesh';
+  private currentSmplDisplayNodes:
+    | {
+        skinnedMesh: any;
+        skeletonHelper: any;
+      }
+    | null = null;
   private recoverReadyTimer: number | null = null;
   private recoverableDropHint: string | null = null;
   private presetManifest: ViewerPresetManifest | null = null;
@@ -333,6 +365,12 @@ export class AppController {
       eventTarget?.tagName === 'TEXTAREA' ||
       eventTarget?.isContentEditable
     ) {
+      return;
+    }
+
+    if (event.key === 'Shift' && this.currentSmplModel && this.currentSmplDisplayNodes) {
+      event.preventDefault();
+      this.toggleSmplDisplayMode();
       return;
     }
 
@@ -402,12 +440,14 @@ export class AppController {
   private readonly onShowVisualClick = (): void => {
     this.showVisual = !this.showVisual;
     this.sceneController.setGeometryVisibility(this.showVisual, this.showCollision);
+    this.applySmplDisplayMode();
     this.syncVisibilityButtons();
   };
 
   private readonly onShowCollisionClick = (): void => {
     this.showCollision = !this.showCollision;
     this.sceneController.setGeometryVisibility(this.showVisual, this.showCollision);
+    this.applySmplDisplayMode();
     this.syncVisibilityButtons();
   };
 
@@ -538,6 +578,7 @@ export class AppController {
 
     this.sceneController = new SceneController(canvas);
     this.sceneController.setModelUpAxis('+Z');
+    this.sceneController.setVisualProfile('default');
     this.sceneController.setViewMode(this.viewMode);
     this.sceneController.onViewWarning = (warning) => {
       this.sceneWarning = warning;
@@ -549,8 +590,10 @@ export class AppController {
     this.urdfLoadService = new UrdfLoadService();
     this.csvMotionService = new CsvMotionService();
     this.bvhMotionService = new BvhMotionService();
+    this.smplMotionService = new SmplMotionService();
     this.motionPlayer = new G1MotionPlayer();
     this.bvhMotionPlayer = new BvhMotionPlayer();
+    this.smplMotionPlayer = new SmplMotionPlayer();
     this.motionPlayer.onFrameChanged = (snapshot) => {
       this.motionFrameSnapshot = snapshot;
       this.syncMotionControls();
@@ -587,6 +630,28 @@ export class AppController {
       }
     };
     this.bvhMotionPlayer.onWarning = (warning) => {
+      if (!this.motionWarnings.includes(warning)) {
+        this.motionWarnings.push(warning);
+      }
+
+      if (this.viewerState === 'ready') {
+        this.renderCurrentReadyState();
+      }
+    };
+    this.smplMotionPlayer.onFrameChanged = (snapshot) => {
+      this.motionFrameSnapshot = snapshot;
+      this.syncMotionControls();
+      this.sceneController.syncGroundToCurrentRobot();
+      this.sceneController.syncViewToCurrentRobot();
+    };
+    this.smplMotionPlayer.onPlaybackStateChanged = (isPlaying) => {
+      this.isMotionPlaying = isPlaying;
+      this.syncMotionControls();
+      if (this.viewerState === 'ready') {
+        this.renderCurrentReadyState();
+      }
+    };
+    this.smplMotionPlayer.onWarning = (warning) => {
       if (!this.motionWarnings.includes(warning)) {
         this.motionWarnings.push(warning);
       }
@@ -642,6 +707,7 @@ export class AppController {
     this.recoverableDropHint = null;
     this.urdfLoadService.dispose();
     this.sceneController.setModelUpAxis('+Z');
+    this.sceneController.setVisualProfile('default');
     this.sceneController.clearRobot();
     this.sceneController.resetView();
     this.motionPlayer.attachRobot(null);
@@ -675,6 +741,7 @@ export class AppController {
     this.urdfLoadService.dispose();
     this.motionPlayer.dispose();
     this.bvhMotionPlayer.dispose();
+    this.smplMotionPlayer.dispose();
     this.sceneController.dispose();
   }
 
@@ -727,10 +794,42 @@ export class AppController {
       return;
     }
 
+    const smplScan = await this.smplMotionService.scanDroppedNpzFiles(fileMap);
+    if (smplScan.modelPaths.length > 0 || smplScan.motionPaths.length > 0) {
+      if (smplScan.modelPaths.length > 0 && smplScan.motionPaths.length > 0) {
+        await this.loadSmplMotionFromDroppedFiles(fileMap);
+        return;
+      }
+
+      if (smplScan.modelPaths.length > 0) {
+        await this.loadSmplModelFromDroppedFiles(fileMap);
+        return;
+      }
+
+      if (this.currentSmplFileMap && this.currentSmplModel) {
+        const mergedSmplFileMap = this.smplMotionService.mergeDroppedFileMaps(
+          this.currentSmplFileMap,
+          fileMap,
+        );
+        await this.loadSmplMotionFromDroppedFiles(
+          mergedSmplFileMap,
+          this.currentSmplModel.modelSourcePath,
+        );
+        return;
+      }
+
+      this.showRecoverableDropError(
+        'SMPL Model Required',
+        'Load a SMPL model file first (NPZ or smpl_webuser basicmodel PKL), then drop SMPL motion NPZ.',
+        'SMPL motion-only drop needs an active SMPL model.',
+      );
+      return;
+    }
+
     this.showRecoverableDropError(
       'No Supported Files',
-      'Drop URDF model files, motion CSV, or BVH motion files.',
-      'Unsupported files were ignored. Drop URDF/CSV/BVH to continue.',
+      'Drop URDF model files, motion CSV/BVH, or SMPL model (NPZ/PKL) + motion NPZ files.',
+      'Unsupported files were ignored. Drop URDF/CSV/BVH/SMPL model NPZ|PKL + motion NPZ to continue.',
     );
   }
 
@@ -738,6 +837,7 @@ export class AppController {
     this.lastLoadResult = null;
     this.sceneWarning = null;
     this.sceneController.setModelUpAxis('+Z');
+    this.sceneController.setVisualProfile('default');
     this.selectedUrdfPath = urdfPath;
     this.renderUrdfList();
     this.sceneController.clearRobot();
@@ -852,6 +952,7 @@ export class AppController {
 
       this.sceneController.clearRobot();
       this.sceneController.setModelUpAxis('+Y');
+      this.sceneController.setVisualProfile('default');
       this.clearMotionPlayback();
       this.sceneController.setRobot(result.sceneObject as unknown as LoadedRobotResult['robot']);
       this.sceneController.setGeometryVisibility(this.showVisual, this.showCollision);
@@ -893,15 +994,215 @@ export class AppController {
     }
   }
 
+  private async loadSmplMotionFromDroppedFiles(
+    fileMap: DroppedFileMap,
+    preferredModelPath?: string,
+    preferredMotionPath?: string,
+  ): Promise<void> {
+    this.setState('loading', {
+      detail: 'Loading SMPL model and motion ...',
+    });
+
+    try {
+      const result = await this.smplMotionService.loadFromDroppedFiles(
+        fileMap,
+        preferredModelPath,
+        preferredMotionPath,
+      );
+
+      this.lastLoadResult = null;
+      this.sceneWarning = null;
+      this.droppedFileMap = null;
+      this.availableUrdfPaths = [];
+      this.selectedUrdfPath = null;
+      this.urdfLoadService.dispose();
+      this.renderUrdfList();
+
+      this.sceneController.clearRobot();
+      this.sceneController.setModelUpAxis('+Z');
+      this.sceneController.setVisualProfile('smpl');
+      this.clearMotionPlayback();
+      this.sceneController.setRobot(result.sceneObject as unknown as LoadedRobotResult['robot']);
+      this.sceneController.setGeometryVisibility(this.showVisual, this.showCollision);
+      this.bindSmplDisplayNodes(result.sceneObject);
+
+      this.currentMotionClip = null;
+      this.currentBvhMotion = null;
+      this.currentBvhFileMap = null;
+      this.currentSmplModel = {
+        modelName: result.modelName,
+        modelSourcePath: result.selectedModelPath,
+        jointCount: result.jointCount,
+        vertexCount: result.vertexCount,
+      };
+      this.currentSmplMotion = {
+        modelName: result.modelName,
+        modelSourcePath: result.selectedModelPath,
+        motionName: result.motionName,
+        motionSourcePath: result.selectedMotionPath,
+        frameCount: result.frameCount,
+        fps: result.fps,
+        jointCount: result.jointCount,
+        vertexCount: result.vertexCount,
+      };
+      this.currentSmplFileMap = fileMap;
+      this.currentMotionKind = 'smpl';
+      this.currentMotionSourcePath = result.selectedMotionPath;
+      this.motionWarnings = [...result.warnings];
+      this.motionFrameSnapshot = {
+        frameIndex: 0,
+        frameCount: result.frameCount,
+        fps: result.fps,
+        timeSeconds: 0,
+      };
+
+      this.smplMotionPlayer.load(result.playbackTarget, result.clip);
+      this.sceneController.frameRobot();
+      this.sceneController.syncGroundToCurrentRobot();
+      this.playActiveMotion();
+      this.syncMotionControls();
+      this.recoverableDropHint = null;
+      this.renderSmplReadyState();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.setState('error', {
+        title: 'SMPL Load Failed',
+        detail: reason,
+      });
+    }
+  }
+
+  private async loadSmplModelFromDroppedFiles(
+    fileMap: DroppedFileMap,
+    preferredModelPath?: string,
+  ): Promise<void> {
+    this.setState('loading', {
+      detail: 'Loading SMPL model ...',
+    });
+
+    try {
+      const result = await this.smplMotionService.loadModelOnlyFromDroppedFiles(
+        fileMap,
+        preferredModelPath,
+      );
+
+      this.lastLoadResult = null;
+      this.sceneWarning = null;
+      this.droppedFileMap = null;
+      this.availableUrdfPaths = [];
+      this.selectedUrdfPath = null;
+      this.urdfLoadService.dispose();
+      this.renderUrdfList();
+
+      this.sceneController.clearRobot();
+      this.sceneController.setModelUpAxis('+Y');
+      this.sceneController.setVisualProfile('smpl');
+      this.clearMotionPlayback();
+      this.sceneController.setRobot(result.sceneObject as unknown as LoadedRobotResult['robot']);
+      this.sceneController.setGeometryVisibility(this.showVisual, this.showCollision);
+      this.bindSmplDisplayNodes(result.sceneObject);
+
+      this.currentMotionClip = null;
+      this.currentBvhMotion = null;
+      this.currentBvhFileMap = null;
+      this.currentSmplModel = {
+        modelName: result.modelName,
+        modelSourcePath: result.selectedModelPath,
+        jointCount: result.jointCount,
+        vertexCount: result.vertexCount,
+      };
+      this.currentSmplMotion = null;
+      this.currentSmplFileMap = fileMap;
+      this.currentMotionKind = null;
+      this.currentMotionSourcePath = null;
+      this.motionWarnings = [...result.warnings];
+      this.motionFrameSnapshot = null;
+      this.isMotionPlaying = false;
+
+      this.sceneController.frameRobot();
+      this.sceneController.syncGroundToCurrentRobot();
+      this.syncMotionControls();
+      this.recoverableDropHint = null;
+      this.renderSmplModelReadyState();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.setState('error', {
+        title: 'SMPL Load Failed',
+        detail: reason,
+      });
+    }
+  }
+
+  private bindSmplDisplayNodes(sceneObject: unknown): void {
+    const sceneNode = sceneObject as any;
+    const skinnedMesh = sceneNode?.userData?.smplSkinnedMesh;
+    const skeletonHelper = sceneNode?.userData?.smplSkeletonHelper;
+    if (skinnedMesh?.isSkinnedMesh && skeletonHelper?.isSkeletonHelper) {
+      this.currentSmplDisplayNodes = {
+        skinnedMesh,
+        skeletonHelper,
+      };
+      this.applySmplDisplayMode();
+      return;
+    }
+
+    this.currentSmplDisplayNodes = null;
+  }
+
+  private getSmplDisplayModeLabel(): 'Mesh' | 'Skeleton' {
+    return this.smplDisplayMode === 'skeleton' ? 'Skeleton' : 'Mesh';
+  }
+
+  private applySmplDisplayMode(): void {
+    if (!this.currentSmplDisplayNodes) {
+      return;
+    }
+
+    const { skinnedMesh, skeletonHelper } = this.currentSmplDisplayNodes;
+    if (!this.showVisual) {
+      skinnedMesh.visible = false;
+      skeletonHelper.visible = false;
+      return;
+    }
+
+    if (this.smplDisplayMode === 'skeleton') {
+      skinnedMesh.visible = false;
+      skeletonHelper.visible = true;
+      return;
+    }
+
+    skinnedMesh.visible = true;
+    skeletonHelper.visible = false;
+  }
+
+  private toggleSmplDisplayMode(): void {
+    if (!this.currentSmplDisplayNodes) {
+      return;
+    }
+
+    this.smplDisplayMode = this.smplDisplayMode === 'mesh' ? 'skeleton' : 'mesh';
+    this.applySmplDisplayMode();
+    this.syncMotionControls();
+    if (this.viewerState === 'ready') {
+      this.renderCurrentReadyState();
+    }
+  }
+
   private clearMotionPlayback(): void {
     this.motionPlayer.pause();
     this.motionPlayer.loadClip(null);
     this.motionPlayer.attachRobot(null);
     this.bvhMotionPlayer.pause();
     this.bvhMotionPlayer.load(null, null);
+    this.smplMotionPlayer.pause();
+    this.smplMotionPlayer.load(null, null);
     this.currentMotionClip = null;
     this.currentBvhMotion = null;
     this.currentBvhFileMap = null;
+    this.currentSmplModel = null;
+    this.currentSmplMotion = null;
+    this.currentSmplFileMap = null;
+    this.currentSmplDisplayNodes = null;
     this.currentMotionKind = null;
     this.currentMotionSourcePath = null;
     this.motionWarnings = [];
@@ -922,7 +1223,11 @@ export class AppController {
   }
 
   private hasAnyMotion(): boolean {
-    return this.currentMotionKind === 'csv' || this.currentMotionKind === 'bvh';
+    return (
+      this.currentMotionKind === 'csv' ||
+      this.currentMotionKind === 'bvh' ||
+      this.currentMotionKind === 'smpl'
+    );
   }
 
   private playActiveMotion(): void {
@@ -932,6 +1237,10 @@ export class AppController {
     }
     if (this.currentMotionKind === 'bvh') {
       this.bvhMotionPlayer.play();
+      return;
+    }
+    if (this.currentMotionKind === 'smpl') {
+      this.smplMotionPlayer.play();
     }
   }
 
@@ -942,6 +1251,10 @@ export class AppController {
     }
     if (this.currentMotionKind === 'bvh') {
       this.bvhMotionPlayer.pause();
+      return;
+    }
+    if (this.currentMotionKind === 'smpl') {
+      this.smplMotionPlayer.pause();
     }
   }
 
@@ -952,6 +1265,10 @@ export class AppController {
     }
     if (this.currentMotionKind === 'bvh') {
       this.bvhMotionPlayer.reset();
+      return;
+    }
+    if (this.currentMotionKind === 'smpl') {
+      this.smplMotionPlayer.reset();
     }
   }
 
@@ -962,6 +1279,10 @@ export class AppController {
     }
     if (this.currentMotionKind === 'bvh') {
       this.bvhMotionPlayer.seek(frameIndex);
+      return;
+    }
+    if (this.currentMotionKind === 'smpl') {
+      this.smplMotionPlayer.seek(frameIndex);
     }
   }
 
@@ -982,6 +1303,16 @@ export class AppController {
 
     if (this.currentMotionKind === 'bvh' && this.currentBvhMotion) {
       this.renderBvhReadyState();
+      return;
+    }
+
+    if (this.currentMotionKind === 'smpl' && this.currentSmplMotion) {
+      this.renderSmplReadyState();
+      return;
+    }
+
+    if (this.currentSmplModel) {
+      this.renderSmplModelReadyState();
       return;
     }
 
@@ -1028,7 +1359,7 @@ export class AppController {
   private renderReadyState(result: LoadedRobotResult): void {
     const motionDetail = this.currentMotionClip
       ? ` Motion: ${this.currentMotionClip.name} (${this.currentMotionClip.frameCount} frames @ ${this.currentMotionClip.fps} FPS, ${this.isMotionPlaying ? 'playing' : 'paused'}). Drop CSV to replace motion.`
-      : ' Drop CSV to load motion, or drop BVH to switch into BVH preview mode.';
+      : ' Drop CSV to load motion, drop BVH to switch into BVH preview mode, or drop SMPL model (NPZ/PKL) + motion NPZ to switch into SMPL mode.';
 
     const sourceDetail = this.currentMotionSourcePath
       ? ` Motion source: ${this.currentMotionSourcePath}.`
@@ -1060,11 +1391,62 @@ export class AppController {
       `${this.currentBvhMotion.jointCount} animated joints, ` +
       `${this.currentBvhMotion.frameCount} frames @ ${this.currentBvhMotion.fps.toFixed(2)} FPS, ` +
       `${status}. Unit: ${this.currentBvhMotion.linearUnit}. Source: ${this.currentBvhMotion.sourcePath}. ` +
-      'Drop another BVH to replace motion, or drop URDF to return to robot mode.' +
+      'Drop another BVH to replace motion, drop URDF to return to robot mode, or drop SMPL model (NPZ/PKL) + motion NPZ to switch mode.' +
       viewModeDetail;
 
     this.setState('ready', {
       title: `Loaded ${this.currentBvhMotion.name}`,
+      detail,
+      dropHint: this.buildReadyDropHint(),
+      warnings: this.collectReadyWarnings([]),
+    });
+  }
+
+  private renderSmplReadyState(): void {
+    if (!this.currentSmplMotion) {
+      return;
+    }
+
+    const viewModeDetail =
+      this.viewMode === 'root_lock'
+        ? ' View mode: root lock (press Tab to switch).'
+        : ' View mode: free (press Tab to switch).';
+    const renderModeDetail = ` Render: ${this.getSmplDisplayModeLabel()} (press Shift to toggle).`;
+    const status = this.isMotionPlaying ? 'playing' : 'paused';
+    const detail =
+      `${this.currentSmplMotion.jointCount} joints, ${this.currentSmplMotion.vertexCount} vertices, ` +
+      `${this.currentSmplMotion.frameCount} frames @ ${this.currentSmplMotion.fps.toFixed(2)} FPS, ${status}. ` +
+      `Model: ${this.currentSmplMotion.modelSourcePath}. Motion: ${this.currentSmplMotion.motionSourcePath}. ` +
+      'Drop another SMPL model (NPZ/PKL) + motion NPZ set (or motion NPZ only) to replace current playback, or drop URDF/BVH to switch mode.' +
+      renderModeDetail +
+      viewModeDetail;
+
+    this.setState('ready', {
+      title: `Loaded ${this.currentSmplMotion.motionName}`,
+      detail,
+      dropHint: this.buildReadyDropHint(),
+      warnings: this.collectReadyWarnings([]),
+    });
+  }
+
+  private renderSmplModelReadyState(): void {
+    if (!this.currentSmplModel) {
+      return;
+    }
+
+    const viewModeDetail =
+      this.viewMode === 'root_lock'
+        ? ' View mode: root lock (press Tab to switch).'
+        : ' View mode: free (press Tab to switch).';
+    const renderModeDetail = ` Render: ${this.getSmplDisplayModeLabel()} (press Shift to toggle).`;
+    const detail =
+      `${this.currentSmplModel.jointCount} joints, ${this.currentSmplModel.vertexCount} vertices. ` +
+      `Model: ${this.currentSmplModel.modelSourcePath}. Drop SMPL motion NPZ to start playback, or drop another SMPL model NPZ/PKL to replace model.` +
+      renderModeDetail +
+      viewModeDetail;
+
+    this.setState('ready', {
+      title: `Loaded ${this.currentSmplModel.modelName}`,
       detail,
       dropHint: this.buildReadyDropHint(),
       warnings: this.collectReadyWarnings([]),
@@ -1079,6 +1461,16 @@ export class AppController {
 
     if (this.currentMotionKind === 'bvh' && this.currentBvhMotion) {
       this.renderBvhReadyState();
+      return;
+    }
+
+    if (this.currentMotionKind === 'smpl' && this.currentSmplMotion) {
+      this.renderSmplReadyState();
+      return;
+    }
+
+    if (this.currentSmplModel) {
+      this.renderSmplModelReadyState();
     }
   }
 
@@ -1094,7 +1486,9 @@ export class AppController {
   private hasRecoverableReadyState(): boolean {
     return Boolean(
       this.lastLoadResult ||
-      (this.currentMotionKind === 'bvh' && this.currentBvhMotion),
+      (this.currentMotionKind === 'bvh' && this.currentBvhMotion) ||
+      (this.currentMotionKind === 'smpl' && this.currentSmplMotion) ||
+      this.currentSmplModel,
     );
   }
 
@@ -1215,8 +1609,13 @@ export class AppController {
     this.motionPlayButton.textContent = this.isMotionPlaying ? 'Pause' : 'Play';
     this.motionPlayButton.classList.toggle('active', this.isMotionPlaying);
 
-    const defaultFrameCount = this.currentMotionClip?.frameCount ?? this.currentBvhMotion?.frameCount ?? 0;
-    const defaultFps = this.currentMotionClip?.fps ?? this.currentBvhMotion?.fps ?? 30;
+    const defaultFrameCount =
+      this.currentMotionClip?.frameCount ??
+      this.currentBvhMotion?.frameCount ??
+      this.currentSmplMotion?.frameCount ??
+      0;
+    const defaultFps =
+      this.currentMotionClip?.fps ?? this.currentBvhMotion?.fps ?? this.currentSmplMotion?.fps ?? 30;
 
     const snapshot =
       this.motionFrameSnapshot ??
@@ -1245,6 +1644,15 @@ export class AppController {
       this.motionName.textContent =
         `${this.currentBvhMotion.name} · ${this.currentBvhMotion.fps.toFixed(2)} FPS · ` +
         `${this.currentBvhMotion.jointCount} joints (BVH, ${this.currentBvhMotion.linearUnit})`;
+      this.syncMotionFpsInput();
+      this.syncBvhUnitControl();
+      return;
+    }
+
+    if (this.currentMotionKind === 'smpl' && this.currentSmplMotion) {
+      this.motionName.textContent =
+        `${this.currentSmplMotion.motionName} · ${this.currentSmplMotion.fps.toFixed(2)} FPS · ` +
+        `${this.currentSmplMotion.jointCount} joints · ${this.currentSmplMotion.vertexCount} verts (SMPL, ${this.getSmplDisplayModeLabel()})`;
       this.syncMotionFpsInput();
       this.syncBvhUnitControl();
       return;
@@ -1398,6 +1806,69 @@ export class AppController {
     });
 
     try {
+      if (preset.motion?.kind === 'smpl') {
+        if (!preset.model) {
+          throw new Error(`Preset "${preset.label}" requires a model section for SMPL playback.`);
+        }
+
+        const modelFiles =
+          preset.model.files && preset.model.files.length > 0
+            ? preset.model.files
+            : preset.model.urdfPath
+              ? [this.buildSinglePresetFile(preset.model.urdfPath)]
+              : [];
+        if (modelFiles.length === 0) {
+          throw new Error(`Preset "${preset.label}" does not define SMPL model files.`);
+        }
+
+        if ((!preset.motion.files || preset.motion.files.length === 0) && !preset.motion.path) {
+          throw new Error(`Preset "${preset.label}" does not define SMPL motion files.`);
+        }
+
+        const motionFiles =
+          preset.motion.files && preset.motion.files.length > 0
+            ? preset.motion.files
+            : [this.buildSinglePresetFile(preset.motion.path as string)];
+
+        const modelFileMap = await this.fetchPresetFileMap(modelFiles);
+        const motionFileMap = await this.fetchPresetFileMap(motionFiles);
+        const mergedFileMap = this.smplMotionService.mergeDroppedFileMaps(modelFileMap, motionFileMap);
+
+        const preferredModelPath =
+          preset.model.selectedUrdfPath ??
+          (preset.model.urdfPath ? normalizePresetMapPath(preset.model.urdfPath) : undefined);
+        if (preferredModelPath && !mergedFileMap.has(preferredModelPath)) {
+          throw new Error(
+            `Preset "${preset.label}" selected model path is missing: ${preferredModelPath}`,
+          );
+        }
+
+        const preferredMotionPath =
+          preset.motion.selectedMotionPath ??
+          (preset.motion.path ? normalizePresetMapPath(preset.motion.path) : undefined);
+        if (preferredMotionPath && !mergedFileMap.has(preferredMotionPath)) {
+          throw new Error(
+            `Preset "${preset.label}" selected motion path is missing: ${preferredMotionPath}`,
+          );
+        }
+
+        await this.loadSmplMotionFromDroppedFiles(
+          mergedFileMap,
+          preferredModelPath,
+          preferredMotionPath,
+        );
+
+        if (
+          this.currentMotionKind !== 'smpl' ||
+          !this.currentSmplMotion ||
+          !mergedFileMap.has(this.currentSmplMotion.motionSourcePath)
+        ) {
+          throw new Error(`Failed to load SMPL motion for preset "${preset.label}".`);
+        }
+
+        return;
+      }
+
       if (preset.model) {
         if (preset.model.files && preset.model.files.length > 0) {
           const modelFileMap = await this.fetchPresetFileMap(preset.model.files);
@@ -1492,7 +1963,8 @@ export class AppController {
       this.setState('error', {
         title: 'Preset Load Failed',
         detail: reason,
-        dropHint: 'Choose another preset, or drag URDF/CSV/BVH files to continue.',
+        dropHint:
+          'Choose another preset, or drag URDF/CSV/BVH/SMPL model NPZ|PKL + motion NPZ files to continue.',
       });
     } finally {
       this.isPresetLoading = false;

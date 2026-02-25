@@ -16,7 +16,7 @@
 ## 当前范围
 
 - 技术栈：Vite + TypeScript + Three.js + urdf-loader
-- 已实现：预置下拉加载、URDF 拖拽加载、CSV 动作播放、BVH 拖拽播放、基础状态面板与播放控制
+- 已实现：预置下拉加载、URDF 拖拽加载、CSV 动作播放、BVH 拖拽播放、SMPL 模型（`.npz` / `basicmodel_*.pkl`）+ 动作 NPZ 播放、基础状态面板与播放控制
 - 典型场景：本地模型与动作文件的快速可视化验证
 
 ## 支持的输入与操作
@@ -29,8 +29,19 @@
 - BVH 播放采用 Y-up 朝向，并会自动消除首帧根节点 X/Z 偏移以居中
 - 可在 Motion 面板通过 `BVH Unit` 下拉框切换 BVH 单位解析（`m`、`dm`、`cm`、`inch`、`feet`）
 - 在 `root lock` 视角模式下，BVH 现已跟踪动画根骨骼位置（类似 BVHView 的 `track`）
+- SMPL 模型文件：支持 `.npz` 与旧版 `smpl_webuser` 的 `basicmodel_*.pkl`，可先单独加载为静态人体预览
+- SMPL 动作 NPZ (.npz)：加载 SMPL 模型后，再拖入动作 NPZ（支持 AMASS 风格 `poses/trans`）即可播放
+- SMPL 播放 FPS 优先读取 `mocap_framerate.npy` 或 `mocap_frame_rate.npy`，若缺失则默认 30
+- 在 SMPL 模式下，后续可仅拖入动作 NPZ，在复用当前 SMPL 模型的前提下替换动作
+- SMPL 静态预览使用 Y-up；SMPL 动作播放使用 AMASS 兼容朝向，确保动画姿态保持站立
+- SMPL 渲染改为接近 AMASS 示例的浅肤色材质与方向光阴影，同时保持与 URDF/BVH 一致的背景和地面网格风格
+- 在 SMPL 模式下可按 `Shift` 在带皮肤网格与纯骨骼显示之间切换
+- SMPL 骨骼模式在动作播放时现与带皮肤网格使用同一套朝向处理（加载 motion 后不再侧躺翻转）
+- 骨骼线条（SMPL 骨骼模式与 BVH 播放）统一使用高对比亮青色，便于在深色背景下观察
+- 此处 `smpl_webuser` 指 SMPL 历史发布中的 Python 包命名，不是浏览器 Web 运行时
+- 前端 SMPL PKL 解析现仅使用 `pickleparser`（不再使用项目内 pickle 回退解析器）
 - 拖入不支持文件时会短暂显示红色告警面板，随后自动回到 ready 布局，并在左下角保留上一条告警提示
-- 操作：`Space` 播放/暂停，`R` 重置到第 1 帧，`Tab` 切换视角模式，滑块可拖动定位帧
+- 操作：`Space` 播放/暂停，`R` 重置到第 1 帧，`Tab` 切换视角模式，`Shift` 切换 SMPL 网格/骨骼显示，滑块可拖动定位帧
 - CSV 播放频率可在 Motion 面板的 `FPS` 输入框中直接修改（即时生效）
 
 ## 静态站点预置部署
@@ -44,7 +55,7 @@
 每个 preset 可包含：
 
 - `model`（推荐）：仅配置 `urdfPath`，例如 `presets/models/g1/g1_29dof_rev_1_0.urdf`
-- `motion`（推荐）：配置 `kind: "csv" | "bvh"` 与 `path`
+- `motion`（推荐）：配置 `kind: "csv" | "bvh" | "smpl"` 与 `path`
 - 旧格式仍兼容：`model.files[]`（可选 `selectedUrdfPath`）
 - 旧格式仍兼容：`motion.files[]`（可选 `selectedMotionPath`）
 
@@ -52,6 +63,7 @@
 
 - 使用 `model.urdfPath` 时，不再需要在 `presets.json` 里手工列出所有 mesh 文件。
 - mesh 资源会按 URDF 所在路径做 URL 相对解析，更适合把大体积机器人资源直接放进 `public/presets/models/*`。
+- 对于 SMPL preset，请使用 `motion.kind: "smpl"`，并通过 `model.files[]` + `motion.files[]`（或 `motion.path`）提供模型文件（`.npz` 或 `basicmodel_*.pkl`）与动作 NPZ。
 
 修改预置后，重新构建并部署静态文件：
 
@@ -71,12 +83,13 @@
 
 - URDF (.urdf)
 - MuJoCo MJCF (.xml)
-- SMPL / SMPL-X (.pkl)
+- SMPL / SMPL-X 模型 NPZ (.npz)【已实现】
+- 旧版 `smpl_webuser` 的 `basicmodel_*.pkl`【已实现（pickleparser）】
 
 ### 动作
 
 - CSV (.csv)【已实现】
-- NumPy NPZ (.npz)
+- NumPy NPZ (.npz，SMPL `poses/trans`)【已实现】
 - BVH (.bvh)【已实现】
 - FBX (.fbx)
 

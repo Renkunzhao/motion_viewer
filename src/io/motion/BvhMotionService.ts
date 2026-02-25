@@ -27,6 +27,7 @@ const BVH_UNIT_SCALE: Record<BvhLinearUnit, number> = {
   inch: 0.0254,
   feet: 0.3048,
 };
+const SKELETON_HIGHLIGHT_COLOR = '#7ef9ff';
 
 function normalizeLinearUnit(linearUnit: BvhLinearUnit): BvhLinearUnit {
   if (BVH_LINEAR_UNITS.includes(linearUnit)) {
@@ -225,6 +226,15 @@ export class BvhMotionService {
     const helper = new SkeletonHelper(rootBone);
     helper.name = `${clipName}-skeleton`;
     helper.skeleton = parsed.skeleton;
+    // Keep helper matrix in model-local space to avoid double transforms under rotated scene roots.
+    helper.matrix = rootBone.matrix;
+    helper.matrixAutoUpdate = false;
+    const helperMaterial = helper.material as any;
+    helperMaterial.vertexColors = false;
+    helperMaterial.color?.set?.(SKELETON_HIGHLIGHT_COLOR);
+    helperMaterial.transparent = true;
+    helperMaterial.opacity = 0.98;
+    helperMaterial.needsUpdate = true;
 
     const sceneObject = new Group();
     sceneObject.name = `${clipName}-root`;

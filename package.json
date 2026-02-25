@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "pickleparser": "^0.2.1",
     "three": "^0.164.1",
     "urdf-loader": "^0.12.6"
   },
