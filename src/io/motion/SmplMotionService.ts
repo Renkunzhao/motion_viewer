@@ -48,9 +48,17 @@ interface SmplRigData {
   bones: any[];
 }
 
+export interface SmplObjectMotionTrack {
+  frameCount: number;
+  trans: Float32Array;
+  rotMat: Float32Array | null;
+  scale: Float32Array | null;
+}
+
 export interface SmplPlaybackTarget {
   rootGroup: any;
   bones: any[];
+  objectRoot?: any;
 }
 
 export interface SmplMotionClip {
@@ -63,6 +71,8 @@ export interface SmplMotionClip {
   poses: Float32Array;
   trans: Float32Array;
   translationOffsetXY: [number, number];
+  objectMotion: SmplObjectMotionTrack | null;
+  objectName: string | null;
 }
 
 export interface SmplMotionLoadResult {
@@ -73,10 +83,12 @@ export interface SmplMotionLoadResult {
   clip: SmplMotionClip;
   modelName: string;
   motionName: string;
+  objectName: string | null;
   frameCount: number;
   fps: number;
   vertexCount: number;
   jointCount: number;
+  hasObjectMotion: boolean;
   warnings: string[];
 }
 
@@ -126,6 +138,31 @@ function sortPaths(paths: string[]): string[] {
 
 function buildDisplayName(path: string, fallback: string): string {
   return getBaseName(path) || fallback;
+}
+
+function normalizeObjectNameToken(raw: string): string | null {
+  const normalized = raw.trim().toLowerCase().replace(/[^a-z0-9_]+/g, '');
+  const core = normalized
+    .replace(/_cleaned_simplified(?:_(top|bottom))?$/, '')
+    .replace(/_(top|bottom)$/, '');
+  return core || null;
+}
+
+function inferObjectNameFromSeqLikeName(rawName: string): string | null {
+  const tokens = rawName
+    .trim()
+    .split('_')
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+  if (tokens.length < 2) {
+    return null;
+  }
+
+  if (/^sub\d+$/i.test(tokens[0] ?? '')) {
+    return normalizeObjectNameToken(tokens[1] ?? '');
+  }
+
+  return normalizeObjectNameToken(tokens[1] ?? '');
 }
 
 function isSmplWebuserModelPklPath(path: string): boolean {
@@ -488,6 +525,11 @@ export class SmplMotionService {
     }
 
     const motionArchive = await parseNpzFile(motionFile);
+    const objectName = await this.resolveMotionObjectName(
+      motionArchive,
+      selectedMotionPath,
+      warnings,
+    );
 
     const clipName = buildDisplayName(selectedMotionPath, 'smpl_motion.npz');
     const modelName = buildDisplayName(selectedModelPath, 'smpl_model');
@@ -567,6 +609,157 @@ export class SmplMotionService {
       trans[dstBase + 2] = transValues[srcBase + 2] ?? 0;
     }
 
+    let objectMotion: SmplObjectMotionTrack | null = null;
+    if (motionArchive.hasFile('obj_trans.npy')) {
+      const objTransRaw = await motionArchive.readNpy('obj_trans.npy');
+      const objTransShape = objTransRaw.shape;
+      const objTransValues = objTransRaw.toNumberArray();
+
+      let objTransFrameCount = 0;
+      let objTransStride = 0;
+      if (objTransShape.length === 2) {
+        objTransFrameCount = objTransShape[0] ?? 0;
+        objTransStride = objTransShape[1] ?? 0;
+      } else if (objTransShape.length === 3) {
+        const axisCount = objTransShape[1] ?? 0;
+        const tailCount = objTransShape[2] ?? 0;
+        if (axisCount !== 3 || tailCount !== 1) {
+          throw new Error(
+            `SMPL motion obj_trans.npy shape must be [T,3] or [T,3,1], got [${objTransShape.join(', ')}].`,
+          );
+        }
+        objTransFrameCount = objTransShape[0] ?? 0;
+        objTransStride = 3;
+      } else {
+        throw new Error(
+          `SMPL motion obj_trans.npy rank must be 2 or 3, got ${objTransShape.length}.`,
+        );
+      }
+
+      if (objTransFrameCount <= 0 || objTransStride < 3) {
+        throw new Error('SMPL motion obj_trans.npy must contain at least XYZ columns per frame.');
+      }
+      if (objTransStride > 3) {
+        warnings.add(`SMPL obj_trans.npy has ${objTransStride} columns; only XYZ are used.`);
+      }
+
+      let objectFrameCount = Math.min(frameCount, objTransFrameCount);
+      let rotMatValues: Float32Array | null = null;
+      let scaleValues: Float32Array | null = null;
+
+      if (motionArchive.hasFile('obj_rot_mat.npy')) {
+        const objRotRaw = await motionArchive.readNpy('obj_rot_mat.npy');
+        const objRotShape = objRotRaw.shape;
+        const objRotValues = objRotRaw.toNumberArray();
+
+        let objRotFrameCount = 0;
+        let objRotStride = 0;
+        if (objRotShape.length === 3) {
+          const rowCount = objRotShape[1] ?? 0;
+          const columnCount = objRotShape[2] ?? 0;
+          if (rowCount !== 3 || columnCount !== 3) {
+            throw new Error(
+              `SMPL motion obj_rot_mat.npy shape must be [T,3,3], got [${objRotShape.join(', ')}].`,
+            );
+          }
+          objRotFrameCount = objRotShape[0] ?? 0;
+          objRotStride = 9;
+        } else if (objRotShape.length === 2) {
+          objRotFrameCount = objRotShape[0] ?? 0;
+          objRotStride = objRotShape[1] ?? 0;
+          if (objRotStride < 9) {
+            throw new Error(
+              `SMPL motion obj_rot_mat.npy must have at least 9 columns, got ${objRotStride}.`,
+            );
+          }
+        } else {
+          throw new Error(
+            `SMPL motion obj_rot_mat.npy rank must be 2 or 3, got ${objRotShape.length}.`,
+          );
+        }
+
+        if (objRotStride > 9) {
+          warnings.add(`SMPL obj_rot_mat.npy has ${objRotStride} columns; only first 9 are used.`);
+        }
+        objectFrameCount = Math.min(objectFrameCount, objRotFrameCount);
+
+        rotMatValues = new Float32Array(objectFrameCount * 9);
+        for (let frameIndex = 0; frameIndex < objectFrameCount; frameIndex += 1) {
+          const srcBase = frameIndex * objRotStride;
+          const dstBase = frameIndex * 9;
+          for (let idx = 0; idx < 9; idx += 1) {
+            rotMatValues[dstBase + idx] = objRotValues[srcBase + idx] ?? 0;
+          }
+        }
+      }
+
+      if (motionArchive.hasFile('obj_scale.npy')) {
+        const objScaleRaw = await motionArchive.readNpy('obj_scale.npy');
+        const objScaleShape = objScaleRaw.shape;
+        const objScaleRawValues = objScaleRaw.toNumberArray();
+
+        let objScaleFrameCount = 0;
+        let objScaleStride = 1;
+        if (objScaleShape.length === 1) {
+          objScaleFrameCount = objScaleShape[0] ?? 0;
+        } else if (objScaleShape.length === 2) {
+          objScaleFrameCount = objScaleShape[0] ?? 0;
+          objScaleStride = objScaleShape[1] ?? 0;
+          if (objScaleStride <= 0) {
+            throw new Error('SMPL motion obj_scale.npy has invalid second dimension.');
+          }
+          if (objScaleStride > 1) {
+            warnings.add(`SMPL obj_scale.npy has ${objScaleStride} columns; only first value is used.`);
+          }
+        } else {
+          throw new Error(
+            `SMPL motion obj_scale.npy rank must be 1 or 2, got ${objScaleShape.length}.`,
+          );
+        }
+
+        objectFrameCount = Math.min(objectFrameCount, objScaleFrameCount);
+        scaleValues = new Float32Array(objectFrameCount);
+        for (let frameIndex = 0; frameIndex < objectFrameCount; frameIndex += 1) {
+          const srcIndex = frameIndex * objScaleStride;
+          scaleValues[frameIndex] = objScaleRawValues[srcIndex] ?? 1;
+        }
+      }
+
+      if (objectFrameCount > 0) {
+        const objectTrans = new Float32Array(objectFrameCount * 3);
+        for (let frameIndex = 0; frameIndex < objectFrameCount; frameIndex += 1) {
+          const srcBase = frameIndex * objTransStride;
+          const dstBase = frameIndex * 3;
+          objectTrans[dstBase] = objTransValues[srcBase] ?? 0;
+          objectTrans[dstBase + 1] = objTransValues[srcBase + 1] ?? 0;
+          objectTrans[dstBase + 2] = objTransValues[srcBase + 2] ?? 0;
+        }
+
+        if (objectFrameCount < frameCount) {
+          warnings.add(
+            `SMPL object tracks have ${objectFrameCount} frames; playback has ${frameCount}. Object uses last valid frame when needed.`,
+          );
+        }
+
+        objectMotion = {
+          frameCount: objectFrameCount,
+          trans: objectTrans,
+          rotMat: rotMatValues,
+          scale: scaleValues,
+        };
+      }
+    }
+
+    if (
+      motionArchive.hasFile('obj_bottom_trans.npy') ||
+      motionArchive.hasFile('obj_bottom_rot_mat.npy') ||
+      motionArchive.hasFile('obj_bottom_scale.npy')
+    ) {
+      warnings.add(
+        'SMPL motion contains obj_bottom_* tracks; current web playback applies only the primary object track.',
+      );
+    }
+
     const fps = motionFps ? Math.max(1, motionFps.toScalarNumber()) : 30;
     const translationOffsetXY: [number, number] = [trans[0] ?? 0, trans[1] ?? 0];
 
@@ -580,6 +773,8 @@ export class SmplMotionService {
       poses,
       trans,
       translationOffsetXY,
+      objectMotion,
+      objectName,
     };
 
     rig.sceneObject.userData.rootTrackNode = rig.bones[0] ?? null;
@@ -595,10 +790,12 @@ export class SmplMotionService {
       clip,
       modelName,
       motionName: clipName,
+      objectName,
       frameCount,
       fps,
       vertexCount: model.vertexCount,
       jointCount: usableJointCount,
+      hasObjectMotion: Boolean(objectMotion),
       warnings: [...warnings],
     };
   }
@@ -609,6 +806,50 @@ export class SmplMotionService {
       merged = mergeFileMaps(merged, map);
     }
     return merged;
+  }
+
+  private async resolveMotionObjectName(
+    motionArchive: Awaited<ReturnType<typeof parseNpzFile>>,
+    selectedMotionPath: string,
+    warnings: Set<string>,
+  ): Promise<string | null> {
+    const readScalarStringEntry = async (entryName: string): Promise<string | null> => {
+      if (!motionArchive.hasFile(entryName)) {
+        return null;
+      }
+
+      try {
+        const scalar = await motionArchive.readNpy(entryName);
+        const value = scalar.toScalarString().trim();
+        return value || null;
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        warnings.add(`SMPL ${entryName} could not be parsed as scalar string (${reason}).`);
+        return null;
+      }
+    };
+
+    const motionObjectName = await readScalarStringEntry('obj_name.npy');
+    if (motionObjectName) {
+      const normalized = normalizeObjectNameToken(motionObjectName);
+      if (normalized) {
+        return normalized;
+      }
+    }
+
+    const sequenceName = await readScalarStringEntry('seq_name.npy');
+    if (sequenceName) {
+      const inferredFromSeq = inferObjectNameFromSeqLikeName(sequenceName);
+      if (inferredFromSeq) {
+        return inferredFromSeq;
+      }
+    }
+
+    const sourceStem = (getBaseName(selectedMotionPath) || selectedMotionPath).replace(
+      /\.[^/.]+$/,
+      '',
+    );
+    return inferObjectNameFromSeqLikeName(sourceStem);
   }
 
   private async loadModelFromFile(

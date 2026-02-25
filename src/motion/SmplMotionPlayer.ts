@@ -1,4 +1,4 @@
-import { Quaternion, Vector3 } from 'three';
+import { Matrix4, Quaternion, Vector3 } from 'three';
 
 import type { MotionFrameSnapshot } from './G1MotionPlayer';
 import type { SmplMotionClip, SmplPlaybackTarget } from '../io/motion/SmplMotionService';
@@ -44,6 +44,7 @@ export class SmplMotionPlayer {
   private readonly cancelFrame: CancelFrameFn;
   private readonly tempAxis = new Vector3();
   private readonly tempQuat = new Quaternion();
+  private readonly tempObjectMatrix = new Matrix4();
   private target: SmplPlaybackTarget | null = null;
   private clip: SmplMotionClip | null = null;
   private frameCount = 0;
@@ -79,6 +80,12 @@ export class SmplMotionPlayer {
     if (this.frameCount <= 0) {
       this.onWarning?.('SMPL clip has no valid frames.');
       return;
+    }
+
+    if (this.clip.objectMotion && !this.target.objectRoot) {
+      this.onWarning?.(
+        'SMPL motion contains object tracks, but no OBJ model is loaded. Object motion is ignored.',
+      );
     }
 
     this.applyFrame(0);
@@ -219,6 +226,57 @@ export class SmplMotionPlayer {
       this.tempAxis.multiplyScalar(1 / angle);
       this.tempQuat.setFromAxisAngle(this.tempAxis, angle);
       bone.quaternion.copy(this.tempQuat);
+    }
+
+    if (this.clip.objectMotion && this.target.objectRoot) {
+      const objectMotion = this.clip.objectMotion;
+      const objectFrame = Math.min(frame, Math.max(objectMotion.frameCount - 1, 0));
+      const objectTransBase = objectFrame * 3;
+      const objectX =
+        (objectMotion.trans[objectTransBase] ?? 0) - (this.clip.translationOffsetXY[0] ?? 0);
+      const objectY =
+        (objectMotion.trans[objectTransBase + 1] ?? 0) - (this.clip.translationOffsetXY[1] ?? 0);
+      const objectZ = objectMotion.trans[objectTransBase + 2] ?? 0;
+
+      this.target.objectRoot.position.set(objectX, objectY, objectZ);
+
+      if (objectMotion.scale) {
+        const scale = objectMotion.scale[objectFrame] ?? 1;
+        this.target.objectRoot.scale.setScalar(scale);
+      }
+
+      if (objectMotion.rotMat) {
+        const rotBase = objectFrame * 9;
+        const m11 = objectMotion.rotMat[rotBase] ?? 1;
+        const m12 = objectMotion.rotMat[rotBase + 1] ?? 0;
+        const m13 = objectMotion.rotMat[rotBase + 2] ?? 0;
+        const m21 = objectMotion.rotMat[rotBase + 3] ?? 0;
+        const m22 = objectMotion.rotMat[rotBase + 4] ?? 1;
+        const m23 = objectMotion.rotMat[rotBase + 5] ?? 0;
+        const m31 = objectMotion.rotMat[rotBase + 6] ?? 0;
+        const m32 = objectMotion.rotMat[rotBase + 7] ?? 0;
+        const m33 = objectMotion.rotMat[rotBase + 8] ?? 1;
+        this.tempObjectMatrix.set(
+          m11,
+          m12,
+          m13,
+          0,
+          m21,
+          m22,
+          m23,
+          0,
+          m31,
+          m32,
+          m33,
+          0,
+          0,
+          0,
+          0,
+          1,
+        );
+        this.tempQuat.setFromRotationMatrix(this.tempObjectMatrix);
+        this.target.objectRoot.quaternion.copy(this.tempQuat);
+      }
     }
 
     this.currentFrame = frame;

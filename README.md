@@ -27,7 +27,7 @@ Its core purpose is to quickly load robot models in the browser and play motion 
 
 - Use `Preset Motion` in the top-left `Datasets` panel and click `Load Preset` for built-in demos.
 - Or drag and drop local files/folders:
-  - URDF workflow: drop `.urdf` + mesh resources, then drop motion `.csv`
+  - URDF workflow: drop folder that inlucde `.urdf` and mesh resources, then drop motion `.csv`
   - BVH workflow: drop `.bvh`
   - SMPL workflow: drop model `.npz` / `basicmodel_*.pkl`, then drop motion `.npz` (`poses/trans`)
 - You can also use `Select Folder` / `Select Files` instead of drag-and-drop.
@@ -55,8 +55,8 @@ Its core purpose is to quickly load robot models in the browser and play motion 
 - Unitree (same source link):
   - [G1, H1, H1-2 (.urdf)](https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset/tree/main)
 - SMPL family:
-  - [SMPL (.npz/.pkl)](https://smpl.is.tue.mpg.de/download.php)
-  - [SMPL-H (.npz/.pkl)](https://mano.is.tue.mpg.de/download.php)
+  - [SMPL (.pkl)](https://smpl.is.tue.mpg.de/download.php)
+  - [SMPL-H (.npz)](https://mano.is.tue.mpg.de/download.php)
   - [SMPL-X (.npz/.pkl)](https://smpl-x.is.tue.mpg.de/download.php)
 
 ## References

@@ -142,6 +142,10 @@ body {
   gap: 0.45rem;
 }
 
+.preset-picker__row--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .preset-picker__select {
   width: 100%;
   min-width: 0;

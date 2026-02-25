@@ -1,4 +1,6 @@
 const ZIP_LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
+const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
+const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
 const ZIP_COMPRESSION_STORE = 0;
 const ZIP_COMPRESSION_DEFLATE = 8;
 
@@ -55,6 +57,18 @@ function normalizeFileName(fileName: string): string {
   return fileName.replace(/\\/g, '/').replace(/^\/+/, '');
 }
 
+function findEndOfCentralDirectoryOffset(view: DataView): number {
+  const maxCommentLength = 0xffff;
+  const minRecordSize = 22;
+  const minOffset = Math.max(0, view.byteLength - (minRecordSize + maxCommentLength));
+  for (let offset = view.byteLength - minRecordSize; offset >= minOffset; offset -= 1) {
+    if (readUint32(view, offset) === ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE) {
+      return offset;
+    }
+  }
+  return -1;
+}
+
 function inflateDeflateRaw(data: Uint8Array): Promise<ArrayBuffer> {
   const globalAny = globalThis as unknown as {
     DecompressionStream?: new (format: string) => {
@@ -90,35 +104,71 @@ async function extractEntryData(entry: ZipEntry): Promise<ArrayBuffer> {
   throw new Error(`Unsupported zip compression method: ${entry.compressionMethod}`);
 }
 
-function parseZipEntries(buffer: ArrayBuffer): Map<string, ZipEntry> {
+function parseZipEntriesFromCentralDirectory(buffer: ArrayBuffer): Map<string, ZipEntry> {
   const dataView = new DataView(buffer);
   const bytes = new Uint8Array(buffer);
   const entries = new Map<string, ZipEntry>();
-  let offset = 0;
 
-  while (offset + 4 <= dataView.byteLength) {
+  const eocdOffset = findEndOfCentralDirectoryOffset(dataView);
+  if (eocdOffset < 0) {
+    throw new Error('Invalid .npz file: end-of-central-directory record not found.');
+  }
+
+  const centralDirectorySize = readUint32(dataView, eocdOffset + 12);
+  const centralDirectoryOffset = readUint32(dataView, eocdOffset + 16);
+  const totalEntries = readUint16(dataView, eocdOffset + 10);
+  const centralDirectoryEnd = centralDirectoryOffset + centralDirectorySize;
+
+  if (
+    centralDirectoryOffset < 0 ||
+    centralDirectorySize < 0 ||
+    centralDirectoryEnd > dataView.byteLength
+  ) {
+    throw new Error('Corrupted .npz zip payload: central directory is out of bounds.');
+  }
+
+  let offset = centralDirectoryOffset;
+  let parsedEntries = 0;
+  while (offset + 46 <= centralDirectoryEnd && parsedEntries < totalEntries) {
     const signature = readUint32(dataView, offset);
-    if (signature !== ZIP_LOCAL_FILE_HEADER_SIGNATURE) {
-      break;
+    if (signature !== ZIP_CENTRAL_DIRECTORY_SIGNATURE) {
+      throw new Error('Corrupted .npz zip payload: invalid central directory signature.');
     }
 
-    const compressionMethod = readUint16(dataView, offset + 8);
-    const compressedSize = readUint32(dataView, offset + 18);
-    const uncompressedSize = readUint32(dataView, offset + 22);
-    const fileNameLength = readUint16(dataView, offset + 26);
-    const extraFieldLength = readUint16(dataView, offset + 28);
-    const fileNameStart = offset + 30;
+    const compressionMethod = readUint16(dataView, offset + 10);
+    const compressedSize = readUint32(dataView, offset + 20);
+    const uncompressedSize = readUint32(dataView, offset + 24);
+    const fileNameLength = readUint16(dataView, offset + 28);
+    const extraFieldLength = readUint16(dataView, offset + 30);
+    const fileCommentLength = readUint16(dataView, offset + 32);
+    const localHeaderOffset = readUint32(dataView, offset + 42);
+    const fileNameStart = offset + 46;
     const fileNameEnd = fileNameStart + fileNameLength;
-    const extraFieldEnd = fileNameEnd + extraFieldLength;
-    const compressedDataEnd = extraFieldEnd + compressedSize;
+    const centralRecordEnd = fileNameEnd + extraFieldLength + fileCommentLength;
 
-    if (compressedDataEnd > dataView.byteLength) {
-      throw new Error('Corrupted .npz zip payload: entry exceeds file bounds.');
+    if (centralRecordEnd > centralDirectoryEnd) {
+      throw new Error('Corrupted .npz zip payload: central directory record exceeds bounds.');
     }
 
     const rawFileName = decodeAscii(bytes.subarray(fileNameStart, fileNameEnd));
     const fileName = normalizeFileName(rawFileName);
-    const compressedData = bytes.subarray(extraFieldEnd, compressedDataEnd);
+
+    if (localHeaderOffset + 30 > dataView.byteLength) {
+      throw new Error('Corrupted .npz zip payload: local header offset is out of bounds.');
+    }
+    if (readUint32(dataView, localHeaderOffset) !== ZIP_LOCAL_FILE_HEADER_SIGNATURE) {
+      throw new Error('Corrupted .npz zip payload: invalid local file header signature.');
+    }
+
+    const localFileNameLength = readUint16(dataView, localHeaderOffset + 26);
+    const localExtraFieldLength = readUint16(dataView, localHeaderOffset + 28);
+    const dataStart = localHeaderOffset + 30 + localFileNameLength + localExtraFieldLength;
+    const dataEnd = dataStart + compressedSize;
+    if (dataEnd > dataView.byteLength) {
+      throw new Error('Corrupted .npz zip payload: entry exceeds file bounds.');
+    }
+
+    const compressedData = bytes.subarray(dataStart, dataEnd);
     entries.set(fileName, {
       fileName,
       compressionMethod,
@@ -126,11 +176,12 @@ function parseZipEntries(buffer: ArrayBuffer): Map<string, ZipEntry> {
       uncompressedSize,
     });
 
-    offset = compressedDataEnd;
+    offset = centralRecordEnd;
+    parsedEntries += 1;
   }
 
   if (entries.size === 0) {
-    throw new Error('Invalid .npz file: no local file entries found.');
+    throw new Error('Invalid .npz file: no zip entries found.');
   }
 
   return entries;
@@ -449,7 +500,7 @@ function createParsedNpyArray(buffer: ArrayBuffer): ParsedNpyArray {
 
 export async function parseNpzFile(file: File): Promise<NpzArchive> {
   const buffer = await file.arrayBuffer();
-  const entries = parseZipEntries(buffer);
+  const entries = parseZipEntriesFromCentralDirectory(buffer);
   const cache = new Map<string, ParsedNpyArray>();
 
   return {

@@ -1,4 +1,25 @@
 {
+  "capturedObjects": [
+    "presets/models/captured_objects/clothesstand_cleaned_simplified.obj",
+    "presets/models/captured_objects/floorlamp_cleaned_simplified.obj",
+    "presets/models/captured_objects/largebox_cleaned_simplified.obj",
+    "presets/models/captured_objects/largetable_cleaned_simplified.obj",
+    "presets/models/captured_objects/monitor_cleaned_simplified.obj",
+    "presets/models/captured_objects/mop_cleaned_simplified.obj",
+    "presets/models/captured_objects/mop_cleaned_simplified_top.obj",
+    "presets/models/captured_objects/mop_cleaned_simplified_bottom.obj",
+    "presets/models/captured_objects/plasticbox_cleaned_simplified.obj",
+    "presets/models/captured_objects/smallbox_cleaned_simplified.obj",
+    "presets/models/captured_objects/smalltable_cleaned_simplified.obj",
+    "presets/models/captured_objects/suitcase_cleaned_simplified.obj",
+    "presets/models/captured_objects/trashcan_cleaned_simplified.obj",
+    "presets/models/captured_objects/tripod_cleaned_simplified.obj",
+    "presets/models/captured_objects/vacuum_cleaned_simplified.obj",
+    "presets/models/captured_objects/vacuum_cleaned_simplified_top.obj",
+    "presets/models/captured_objects/vacuum_cleaned_simplified_bottom.obj",
+    "presets/models/captured_objects/whitechair_cleaned_simplified.obj",
+    "presets/models/captured_objects/woodchair_cleaned_simplified.obj"
+  ],
   "presets": [
     {
       "id": "g1-csv-dance1",

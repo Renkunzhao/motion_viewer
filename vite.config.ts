@@ -6,6 +6,14 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    watch: {
+      ignored: [
+        // Reference repos and embedded Python envs are large and not part of Vite HMR sources.
+        '**/ref/**',
+        '**/.venv/**',
+        '**/site-packages/**',
+      ],
+    },
   },
   test: {
     environment: 'node',

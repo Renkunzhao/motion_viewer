@@ -199,15 +199,26 @@ export class SceneController {
     this.controls.zoomSpeed = 1.0;
     this.controls.target.set(0, 0, 0);
 
-    this.pmremGenerator = new PMREMGenerator(this.renderer);
-    this.pmremGenerator.compileEquirectangularShader();
-    const envScene = new Scene();
-    envScene.add(new HemisphereLight('#ffffff', '#45505f', 1.0));
-    const envKeyLight = new DirectionalLight('#ffffff', 0.8);
-    envKeyLight.position.set(3, 5, 2);
-    envScene.add(envKeyLight);
-    this.environmentMapTarget = this.pmremGenerator.fromScene(envScene, 0.05);
-    this.scene.environment = this.environmentMapTarget.texture;
+    this.pmremGenerator = null;
+    this.environmentMapTarget = null;
+    try {
+      this.pmremGenerator = new PMREMGenerator(this.renderer);
+      this.pmremGenerator.compileEquirectangularShader();
+      const envScene = new Scene();
+      envScene.add(new HemisphereLight('#ffffff', '#45505f', 1.0));
+      const envKeyLight = new DirectionalLight('#ffffff', 0.8);
+      envKeyLight.position.set(3, 5, 2);
+      envScene.add(envKeyLight);
+      this.environmentMapTarget = this.pmremGenerator.fromScene(envScene, 0.05);
+      this.scene.environment = this.environmentMapTarget?.texture ?? null;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`PMREM environment disabled: ${reason}`);
+      this.pmremGenerator?.dispose?.();
+      this.pmremGenerator = null;
+      this.environmentMapTarget = null;
+      this.scene.environment = null;
+    }
 
     this.hemisphereLight = new HemisphereLight('#ffffff', '#21313d', 0.55);
     this.hemisphereLight.position.set(0, 1, 0);
@@ -289,7 +300,7 @@ export class SceneController {
 
     if (profile === 'smpl') {
       this.scene.background = new Color('#07121a');
-      this.scene.environment = this.environmentMapTarget.texture;
+      this.scene.environment = this.environmentMapTarget?.texture ?? null;
       this.renderer.toneMappingExposure = 1.0;
 
       this.hemisphereLight.color.set('#ffffff');
@@ -314,7 +325,7 @@ export class SceneController {
       }
     } else {
       this.scene.background = new Color('#07121a');
-      this.scene.environment = this.environmentMapTarget.texture;
+      this.scene.environment = this.environmentMapTarget?.texture ?? null;
       this.renderer.toneMappingExposure = 1.0;
 
       this.hemisphereLight.color.set('#ffffff');
