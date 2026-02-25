@@ -21,7 +21,15 @@
 
 ## 支持的输入与操作
 
-- 预置（静态内置资源）：在下拉框选择并点击 `Load Preset`，无需本地选文件
+- 预置（静态内置资源）：在左上角 `Datasets` 面板的 `Preset Motion` 下拉框选择并点击 `Load Preset`，无需本地选文件
+- 左上角 `Datasets` 面板改为两列表格：`Dataset` / `Models`
+- 文件格式已直接写在链接文本后面的括号中，例如 `LAFAN1 (.bvh)`
+- 表格按三行区分来源：
+  - 第 1 行：`LAFAN1` + `lafan1-resolved`，模型为 `Skeleton`
+  - 第 2 行：`unitree-LAFAN1-Retarget`，模型使用一个合并链接 `G1, H1, H1-2 (.urdf)`
+  - 第 3 行：`AMASS`，模型为 `SMPL (.npz/.pkl)` / `SMPL-H (.npz/.pkl)` / `SMPL-X (.npz/.pkl)`
+- 右侧状态面板保留快捷键说明
+- URDF / CSV / BVH / SMPL 播放默认视角为 `root lock`；可按 `Tab` 切换到 `free`
 - URDF (.urdf)：支持拖拽文件夹/多文件集合，或使用 Select Folder / Select Files
 - CSV (.csv)：需先加载 URDF；若未加载 URDF，会在中心面板给出引导提示
 - 仅加载 BVH 时若拖入 CSV，会短暂告警并自动回到 ready 布局
@@ -47,7 +55,8 @@
 ## 静态站点预置部署
 
 查看器支持把模型/动作作为静态资源随网站一起发布（如 GitHub Pages、nginx）。
-访问者打开网页后，可直接通过下拉框加载预置，无需 clone 仓库或本地运行。
+访问者打开网页后，可直接通过左上角 `Datasets` 面板中的 `Preset Motion` 下拉框加载预置，
+无需 clone 仓库或本地运行。
 
 - 预置清单：`public/presets/presets.json`
 - 预置资源目录：`public/presets/models/*` 与 `public/presets/motions/*`
@@ -92,6 +101,22 @@
 - NumPy NPZ (.npz，SMPL `poses/trans`)【已实现】
 - BVH (.bvh)【已实现】
 - FBX (.fbx)
+
+## 动作数据集支持
+- [LAFAN1 (.bvh)](https://github.com/ubisoft/ubisoft-laforge-animation-dataset.git)
+- [lafan1-resolved (.bvh)](https://github.com/orangeduck/lafan1-resolved.git)
+- [unitree-LAFAN1-Retarget (.csv)](https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset/tree/main)
+- [AMASS (.npz)](https://amass.is.tue.mpg.de/download.php)
+
+## 模型来源支持
+- Skeleton：
+  - `Skeleton`（对应 LAFAN1 / lafan1-resolved 行）
+- Unitree（同一来源链接）：
+  - [G1, H1, H1-2 (.urdf)](https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset/tree/main)
+- SMPL 家族：
+  - [SMPL (.npz/.pkl)](https://smpl.is.tue.mpg.de/download.php)
+  - [SMPL-H (.npz/.pkl)](https://mano.is.tue.mpg.de/download.php)
+  - [SMPL-X (.npz/.pkl)](https://smpl-x.is.tue.mpg.de/download.php)
 
 ## 参考
 

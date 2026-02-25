@@ -20,27 +20,136 @@
           <p class="drop-overlay__eyebrow">Motion Viewer</p>
           <h1>Motion Viewer</h1>
           <p id="drop-hint" class="drop-overlay__hint">
-            Supported: URDF (.urdf), CSV (.csv), BVH (.bvh), SMPL model (.npz/.pkl) + motion
-            (.npz). For SMPL, load model first then motion. Use preset dropdown, drag files/folders,
-            or click Select Folder / Select Files. Space: play/pause, R: reset, Tab: switch view,
-            Shift: SMPL mesh/skeleton.
+            Use the top-left Datasets panel for dataset/model links. Drag files/folders, or click
+            Select Folder / Select Files.
           </p>
           <div class="drop-overlay__actions">
             <button id="pick-folder-btn" type="button">Select Folder</button>
             <button id="pick-files-btn" type="button">Select Files</button>
             <button id="reset-btn" type="button" class="ghost">Reset</button>
           </div>
-          <div class="preset-picker">
-            <label for="preset-select" class="preset-picker__label">Presets</label>
-            <div class="preset-picker__row">
-              <select id="preset-select" class="preset-picker__select">
-                <option value="">Loading presets...</option>
-              </select>
-              <button id="preset-load-btn" type="button" class="ghost">Load Preset</button>
-            </div>
-          </div>
         </div>
       </div>
+
+      <aside id="dataset-panel" class="dataset-panel" aria-label="Datasets and models">
+        <p class="dataset-panel__title">Datasets</p>
+        <div class="dataset-table-wrap">
+          <table class="dataset-table">
+            <thead>
+              <tr>
+                <th>Dataset</th>
+                <th>Models</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <ul class="dataset-panel__list">
+                    <li>
+                      <a
+                        href="https://github.com/ubisoft/ubisoft-laforge-animation-dataset.git"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        >LAFAN1 (.bvh)</a
+                      >
+                    </li>
+                    <li>
+                      <a
+                        href="https://github.com/orangeduck/lafan1-resolved.git"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        >lafan1-resolved (.bvh)</a
+                      >
+                    </li>
+                  </ul>
+                </td>
+                <td>
+                  <ul class="dataset-panel__list">
+                    <li><span class="dataset-panel__placeholder">Skeleton</span></li>
+                  </ul>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <ul class="dataset-panel__list">
+                    <li>
+                      <a
+                        href="https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset/tree/main"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        >unitree-LAFAN1-Retarget (.csv)</a
+                      >
+                    </li>
+                  </ul>
+                </td>
+                <td>
+                  <ul class="dataset-panel__list">
+                    <li>
+                      <a
+                        href="https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset/tree/main"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        >G1, H1, H1-2 (.urdf)</a
+                      >
+                    </li>
+                  </ul>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <ul class="dataset-panel__list">
+                    <li>
+                      <a
+                        href="https://amass.is.tue.mpg.de/download.php"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        >AMASS (.npz)</a
+                      >
+                    </li>
+                  </ul>
+                </td>
+                <td>
+                  <ul class="dataset-panel__list">
+                    <li>
+                      <a
+                        href="https://smpl.is.tue.mpg.de/download.php"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        >SMPL (.npz/.pkl)</a
+                      >
+                    </li>
+                    <li>
+                      <a
+                        href="https://mano.is.tue.mpg.de/download.php"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        >SMPL-H (.npz/.pkl)</a
+                      >
+                    </li>
+                    <li>
+                      <a
+                        href="https://smpl-x.is.tue.mpg.de/download.php"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        >SMPL-X (.npz/.pkl)</a
+                      >
+                    </li>
+                  </ul>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="preset-picker">
+          <label for="preset-select" class="preset-picker__label">Preset Motion</label>
+          <div class="preset-picker__row">
+            <select id="preset-select" class="preset-picker__select">
+              <option value="">Loading presets...</option>
+            </select>
+            <button id="preset-load-btn" type="button" class="ghost">Load Preset</button>
+          </div>
+        </div>
+      </aside>
 
       <aside id="status-panel" class="status-panel" aria-live="polite">
         <div class="status-panel__top">
@@ -109,7 +218,7 @@
           <ul class="shortcuts-panel__list">
             <li>
               <kbd>Tab</kbd>
-              <span id="shortcut-view-mode">View: Free</span>
+              <span>Switch view mode (Free / Root Lock)</span>
             </li>
             <li>
               <kbd>Space</kbd>

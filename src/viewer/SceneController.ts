@@ -158,7 +158,7 @@ export class SceneController {
   private visualNodes: any[] = [];
   private collisionNodes: any[] = [];
   private modelUpAxis: '+Z' | '+Y' = '+Z';
-  private viewMode: ViewMode = 'free';
+  private viewMode: ViewMode = 'root_lock';
   private showVisual = true;
   private showCollision = false;
   private currentVisualProfile: SceneVisualProfile = 'default';

@@ -13,7 +13,7 @@ const STATE_COPY: Record<ViewerState, StateCopy> = {
     title: 'Motion Viewer',
     detail: 'Use preset dropdown or drag and drop to load URDF / CSV / BVH / SMPL model (.npz/.pkl) + motion (.npz).',
     dropHint:
-      'Supported: URDF (.urdf), CSV (.csv), BVH (.bvh), SMPL model (.npz/.pkl) + motion (.npz). For SMPL, load model first then motion. Use preset dropdown, drag files/folders, or use Select Folder / Select Files. Space: play/pause, R: reset, Tab: switch view, Shift: SMPL mesh/skeleton.',
+      'Use the top-left Datasets panel for dataset/model links. Drag files/folders, or use Select Folder / Select Files.',
   },
   drag_over: {
     chip: 'Drop',
@@ -32,7 +32,8 @@ const STATE_COPY: Record<ViewerState, StateCopy> = {
     title: 'Viewer Ready',
     detail:
       'Select preset, drop another model to replace robot, or drop CSV/BVH/SMPL motion assets to play animation.',
-    dropHint: 'Use preset dropdown or drop URDF/CSV/BVH/SMPL model (.npz/.pkl) + motion (.npz) to update current view. For SMPL, model can be loaded first and motion dropped later.',
+    dropHint:
+      'Use the top-left Datasets panel for dataset/model links, or drop URDF/CSV/BVH/SMPL model (.npz/.pkl) + motion (.npz) to update current view.',
   },
   error: {
     chip: 'Error',

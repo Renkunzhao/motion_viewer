@@ -21,7 +21,15 @@ Its core purpose is to quickly load robot models in the browser and play motion 
 
 ## Supported Input And Operations
 
-- Presets (bundled static assets): choose from dropdown and click `Load Preset`, no local file selection required
+- Presets (bundled static assets): use the `Preset Motion` dropdown in the top-left `Datasets` panel and click `Load Preset`, no local file selection required
+- The top-left `Datasets` panel is now a 2-column table: `Dataset` / `Models`
+- Formats are shown directly in link text using parentheses, for example `LAFAN1 (.bvh)`
+- Rows are split by source family:
+  - Row 1: `LAFAN1` + `lafan1-resolved` with model `Skeleton`
+  - Row 2: `unitree-LAFAN1-Retarget` with one combined model link `G1, H1, H1-2 (.urdf)`
+  - Row 3: `AMASS` with models `SMPL (.npz/.pkl)` / `SMPL-H (.npz/.pkl)` / `SMPL-X (.npz/.pkl)`
+- Keyboard shortcut hints are kept in the right status panel
+- Default view mode is `root lock` for URDF / CSV / BVH / SMPL playback; press `Tab` to switch to `free`
 - URDF (.urdf): drag and drop folder/multi-file set, or use Select Folder/Select Files
 - CSV (.csv): requires URDF loaded first; if URDF is missing, center panel shows guidance
 - Dropping CSV while only BVH is loaded shows temporary warning, then auto-returns to ready layout
@@ -47,7 +55,8 @@ Its core purpose is to quickly load robot models in the browser and play motion 
 ## Static Preset Deployment
 
 The viewer can ship built-in model/motion assets for static hosting (GitHub Pages, nginx, etc.).
-Visitors can open the site and load presets directly from the dropdown without cloning the repo.
+Visitors can open the site and load presets directly from the `Preset Motion` dropdown in the
+top-left `Datasets` panel without cloning the repo.
 
 - Preset manifest: `public/presets/presets.json`
 - Bundled preset assets: `public/presets/models/*` and `public/presets/motions/*`
@@ -95,9 +104,20 @@ After editing presets/assets, rebuild and redeploy static files:
   - Ordered mapping using URDF non-fixed joint declaration order
 
 ## Motion Support
-- [LAFAN1](https://github.com/ubisoft/ubisoft-laforge-animation-dataset.git)
-- [lafan1-resolved](https://github.com/orangeduck/lafan1-resolved.git)
-- [unitree-LAFAN1-Retarget](https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset/tree/main)
+- [LAFAN1 (.bvh)](https://github.com/ubisoft/ubisoft-laforge-animation-dataset.git)
+- [lafan1-resolved (.bvh)](https://github.com/orangeduck/lafan1-resolved.git)
+- [unitree-LAFAN1-Retarget (.csv)](https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset/tree/main)
+- [AMASS (.npz)](https://amass.is.tue.mpg.de/download.php)
+
+## Model Support
+- Skeleton:
+  - `Skeleton` (for LAFAN1 / lafan1-resolved rows)
+- Unitree (same source link):
+  - [G1, H1, H1-2 (.urdf)](https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset/tree/main)
+- SMPL family:
+  - [SMPL (.npz/.pkl)](https://smpl.is.tue.mpg.de/download.php)
+  - [SMPL-H (.npz/.pkl)](https://mano.is.tue.mpg.de/download.php)
+  - [SMPL-X (.npz/.pkl)](https://smpl-x.is.tue.mpg.de/download.php)
 
 ## References
 

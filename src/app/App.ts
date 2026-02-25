@@ -277,7 +277,6 @@ export class AppController {
   private readonly motionFrameSlider: HTMLInputElement;
   private readonly motionFrameLabel: HTMLSpanElement;
   private readonly motionName: HTMLParagraphElement;
-  private readonly shortcutViewModeValue: HTMLSpanElement;
   private readonly folderInput: HTMLInputElement;
   private readonly fileInput: HTMLInputElement;
   private readonly pickFolderButton: HTMLButtonElement;
@@ -337,7 +336,7 @@ export class AppController {
   private motionFrameSnapshot: MotionFrameSnapshot | null = null;
   private isMotionPlaying = false;
   private bvhLinearUnit: BvhLinearUnit = 'm';
-  private viewMode: ViewMode = 'free';
+  private viewMode: ViewMode = 'root_lock';
   private smplDisplayMode: 'mesh' | 'skeleton' = 'mesh';
   private currentSmplDisplayNodes:
     | {
@@ -567,7 +566,6 @@ export class AppController {
     this.motionFrameSlider = requireElement<HTMLInputElement>('motion-frame-slider');
     this.motionFrameLabel = requireElement<HTMLSpanElement>('motion-frame-label');
     this.motionName = requireElement<HTMLParagraphElement>('motion-name');
-    this.shortcutViewModeValue = requireElement<HTMLSpanElement>('shortcut-view-mode');
     this.folderInput = requireElement<HTMLInputElement>('folder-input');
     this.fileInput = requireElement<HTMLInputElement>('file-input');
     this.pickFolderButton = requireElement<HTMLButtonElement>('pick-folder-btn');
@@ -687,7 +685,6 @@ export class AppController {
 
     this.syncVisibilityButtons();
     this.syncMotionControls();
-    this.syncShortcutPanel();
     this.syncPresetControls();
     this.renderState();
     void this.initializePresetManifest();
@@ -1666,16 +1663,10 @@ export class AppController {
   private toggleViewMode(): void {
     this.viewMode = this.viewMode === 'free' ? 'root_lock' : 'free';
     this.sceneController.setViewMode(this.viewMode);
-    this.syncShortcutPanel();
 
     if (this.viewerState === 'ready') {
       this.renderCurrentReadyState();
     }
-  }
-
-  private syncShortcutPanel(): void {
-    this.shortcutViewModeValue.textContent =
-      this.viewMode === 'root_lock' ? 'View: Root Lock' : 'View: Free';
   }
 
   private resolvePresetAssetUrl(path: string): string {
