@@ -1,50 +1,114 @@
 # Motion Viewer — Repository Agent Rules
 
-## Default language
-- Reply in Chinese by default even if the user asks in English.
-- Keep code, commands, filenames, and identifiers in English.
-- If necessary, include English keywords once in parentheses, then continue in Chinese.
-
 ## Required workflow
 - Always output in this structure:
   1) Plan (files to touch + validation steps)
   2) Resource findings (ref/ + models/ + motions paths)
   3) Changes (what and why)
   4) Validation (how to verify)
-  5) Docs update (README.md + README.zh.md sections changed)
 - When adding new features, do not break existing functionality or workflows unless explicitly requested.
-- Read README.md to understand existing functionality before implementation.
 - Prefer minimal, localized changes; add comments where helpful, but avoid redundancy.
 
-### Navigate for resources (MANDATORY)
-When implementing features or debugging:
-1. Prefer searching `ref/` FIRST for similar implementations (must cite at least 1 relevant file path if exists).
-2. Consult `models/` and `motions/` for real asset formats, naming conventions, joint order, and example data.
-3. Avoid scanning large folders blindly:
-   - Do keyword search first.
-   - Open at most 5 files per large folder (`ref/`, `models/`, `motions/`) unless explicitly requested.
+## Repository quick reference (for Codex)
 
-#### Suggested keywords
-- viewer / three / threejs / meshcat / viser
-- gltf / glb / urdf / mjcf / smpl
-- motion / npz / csv / bvh / retarget / joint order
-- loader / parser / skeleton / pose / quaternion
+### Stack and run commands
+- Stack: Vite + TypeScript + Three.js + urdf-loader + pickleparser.
+- Entry: `src/main.ts` creates `AppController`.
+- Common commands:
+  - `npm run dev`
+  - `npm run build`
+  - `npm run test`
 
-#### Notes
-- `ref/` contains open-source reference repositories with similar functionality. Use it as the primary example source.
-- `models/` stores robot model files (URDF/MJCF/GLB/...).
-- `motions/` stores motion files (NPZ/CSV/BVH/...).
+### Code architecture
+- App orchestration:
+  - `src/app/App.ts`
+  - `AppController` is the main coordinator of file drop, preset loading, scene state, and player switching.
+- Scene and rendering:
+  - `src/viewer/SceneController.ts`
+  - Owns camera/light/grid/ground/view mode behavior (`free` / `root lock`).
+- Input parsing services:
+  - `src/io/urdf/UrdfLoadService.ts`: URDF + mesh resource resolution from drop map or preset URL.
+  - `src/io/motion/CsvMotionService.ts`: CSV parsing in header mode and ordered mode.
+  - `src/io/motion/BvhMotionService.ts`: BVH parsing + unit scaling + skeleton helper setup.
+  - `src/io/motion/SmplMotionService.ts`: SMPL model/motion scanning and loading from NPZ/PKL.
+- Playback layer:
+  - `src/motion/G1MotionPlayer.ts`: URDF + CSV motion playback.
+  - `src/motion/BvhMotionPlayer.ts`: BVH playback.
+  - `src/motion/SmplMotionPlayer.ts`: SMPL playback.
 
-### Docs update checklist
-- After implementing a request, you must update BOTH READMEs:
-  - README.md (English)
-  - README.zh.md (Chinese)
-- Keep information consistent across both files.
-- Only edit relevant sections; explicitly list the section titles you changed in both READMEs.
+### Directory structure
+- `src/`: frontend source.
+  - `app/`: app state and UI orchestration.
+  - `io/drop/`: drag/drop and `DataTransfer` to file map.
+  - `io/urdf/`: URDF and mesh path resolving/loading.
+  - `io/motion/`: CSV/BVH/SMPL parsers and loaders.
+  - `motion/`: runtime players.
+  - `viewer/`: three.js scene controller.
+- `public/presets/`: static preset manifest and bundled demo assets.
+  - `public/presets/presets.json`
+- `models/`: model assets and upstream model repos.
+  - SMPL/SMPL-H/SMPL-X examples exist under `models/smpl/`.
+- `motions/`: motion datasets and references.
+  - Contains BVH/CSV/NPZ/FBX and OMOMO-related `.p` / `.npy` data.
+- `ref/`: reference repositories. Primary reference for structure/doc style includes:
+  - `ref/GMR/CLAUDE.md`
 
-## Safety
-- Default to read-only actions (search/open/read) first.
-- Any network download (curl/wget/pip install) requires explicit approval.
-- If necessary, you may `git clone` an open-source repository into `ref/` for reference, but only after explicit user approval.
-  - Prefer minimal clone (shallow/single-branch) and do not download large assets unless required.
-- Before executing any of the above, print the exact commands you plan to run and wait for approval.
+### Drop routing order (important)
+`AppController.handleDroppedFileMap()` processes dropped payload in this priority:
+1. URDF
+2. CSV
+3. BVH
+4. SMPL
+
+Do not change this order unless explicitly requested.
+
+### Supported model and motion formats (current implementation)
+- Model formats:
+  - URDF (`.urdf`)
+  - SMPL/SMPL-H/SMPL-X model NPZ (`.npz`) with required entries:
+    - `v_template.npy`, `shapedirs.npy`, `weights.npy`, `kintree_table.npy`, `J_regressor.npy`, `f.npy`
+  - Legacy SMPL `smpl_webuser` model PKL (`basicmodel_*.pkl`)
+- Motion formats:
+  - CSV (`.csv`) for URDF joint playback
+  - BVH (`.bvh`)
+  - SMPL motion NPZ (`.npz`) with required entries:
+    - `poses.npy`, `trans.npy`
+    - optional: `betas.npy`, `mocap_framerate.npy`, `mocap_frame_rate.npy`
+
+### Dataset/model links shown in UI
+The left `Datasets` panel (defined in `index.html`) groups links by source family:
+- LAFAN1 / lafan1-resolved:
+  - Motion: BVH
+  - Model: Skeleton
+- unitree-LAFAN1-Retarget:
+  - Motion: CSV
+  - Models: G1 / H1 / H1-2 URDF
+- AMASS:
+  - Motion: NPZ
+  - Models: SMPL / SMPL-H / SMPL-X (`.npz/.pkl`)
+
+### Preset mechanism
+- Manifest path: `public/presets/presets.json`.
+- Preset definitions support:
+  - `model.urdfPath` (preferred for URDF)
+  - `model.files[]` (legacy/SMPL)
+  - `motion.kind: "csv" | "bvh" | "smpl"`
+  - `motion.path` or `motion.files[]`
+- Current bundled presets include:
+  - G1/H1/H1-2 + LAFAN1 retarget CSV
+  - LAFAN1 BVH preview
+  - SMPL-H + AMASS-style motion NPZ
+
+### Data roots and real asset conventions
+- `models/` keeps robot/human model files and related metadata.
+- `motions/` keeps dataset files and raw references.
+- Real examples in this repo include:
+  - `motions/LAFAN1_Retargeting_Dataset/*/*.csv`
+  - `motions/lafan1-resolved/bvh/*.bvh`
+  - `motions/AMASS/**/SMPL+H G/*.npz`
+  - `motions/omomo/data/*.p` and object BPS/SDF `.npy`
+
+### SMPL-specific behavior notes
+- Motion-only NPZ drop is allowed only when an SMPL model is already active.
+- When multiple model/motion candidates are found, services auto-select one and push warnings.
+- `SmplMotionService` handles model+motion scanning by checking internal NPZ entries, not only file extension.
