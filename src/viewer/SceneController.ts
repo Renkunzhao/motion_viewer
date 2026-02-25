@@ -28,7 +28,6 @@ const HALF_PI = Math.PI / 2;
 const GRID_BASE_SIZE = 20;
 const MIN_GRID_COVERAGE = 30;
 const DEFAULT_FIT_OFFSET = 1.8;
-const INITIAL_GROUND_SYNC_FRAMES = 90;
 const DEFAULT_KEY_LIGHT_OFFSET = new Vector3(4, 10, 1);
 const SMPL_KEY_LIGHT_OFFSET = new Vector3(3.6, 5.8, 2.6);
 const DEFAULT_FILL_LIGHT_POSITION = new Vector3(-2.2, 3.1, -2.4);
@@ -165,7 +164,6 @@ export class SceneController {
   private animationFrameId = 0;
   private readonly tempTrackTarget = new Vector3();
   private readonly tempCameraOffset = new Vector3();
-  private pendingGroundSyncFrames = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -374,7 +372,6 @@ export class SceneController {
     if (box) {
       this.updateGroundAndGrid(box);
     }
-    this.scheduleGroundSync();
     this.syncViewToCurrentRobot();
   }
 
@@ -395,7 +392,6 @@ export class SceneController {
       if (box) {
         this.updateGroundAndGrid(box);
       }
-      this.scheduleGroundSync(12);
     }
   }
 
@@ -413,7 +409,6 @@ export class SceneController {
     this.referenceGrid.position.y = 0;
     this.groundPlane.scale.setScalar(1);
     this.groundPlane.position.y = 0;
-    this.pendingGroundSyncFrames = 0;
     this.emitWarning(null);
   }
 
@@ -607,17 +602,9 @@ export class SceneController {
 
   private animate(): void {
     this.animationFrameId = requestAnimationFrame(this.animate);
-    if (this.pendingGroundSyncFrames > 0) {
-      this.pendingGroundSyncFrames -= 1;
-      this.syncGroundToCurrentRobot();
-    }
     this.controls.update();
     this.resize();
     this.renderer.render(this.scene, this.camera);
-  }
-
-  private scheduleGroundSync(frameBudget = INITIAL_GROUND_SYNC_FRAMES): void {
-    this.pendingGroundSyncFrames = Math.max(this.pendingGroundSyncFrames, frameBudget);
   }
 
   private enhanceMaterial(material: unknown): unknown {

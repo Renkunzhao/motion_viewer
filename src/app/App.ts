@@ -595,7 +595,6 @@ export class AppController {
     this.motionPlayer.onFrameChanged = (snapshot) => {
       this.motionFrameSnapshot = snapshot;
       this.syncMotionControls();
-      this.sceneController.syncGroundToCurrentRobot();
       this.sceneController.syncViewToCurrentRobot();
     };
     this.motionPlayer.onPlaybackStateChanged = (isPlaying) => {
@@ -617,7 +616,6 @@ export class AppController {
     this.bvhMotionPlayer.onFrameChanged = (snapshot) => {
       this.motionFrameSnapshot = snapshot;
       this.syncMotionControls();
-      this.sceneController.syncGroundToCurrentRobot();
       this.sceneController.syncViewToCurrentRobot();
     };
     this.bvhMotionPlayer.onPlaybackStateChanged = (isPlaying) => {
@@ -639,7 +637,6 @@ export class AppController {
     this.smplMotionPlayer.onFrameChanged = (snapshot) => {
       this.motionFrameSnapshot = snapshot;
       this.syncMotionControls();
-      this.sceneController.syncGroundToCurrentRobot();
       this.sceneController.syncViewToCurrentRobot();
     };
     this.smplMotionPlayer.onPlaybackStateChanged = (isPlaying) => {
@@ -1256,17 +1253,24 @@ export class AppController {
   }
 
   private resetActiveMotion(): void {
+    let resetApplied = false;
     if (this.currentMotionKind === 'csv') {
       this.motionPlayer.reset();
-      return;
-    }
-    if (this.currentMotionKind === 'bvh') {
+      resetApplied = true;
+    } else if (this.currentMotionKind === 'bvh') {
       this.bvhMotionPlayer.reset();
+      resetApplied = true;
+    } else if (this.currentMotionKind === 'smpl') {
+      this.smplMotionPlayer.reset();
+      resetApplied = true;
+    }
+
+    if (!resetApplied) {
       return;
     }
-    if (this.currentMotionKind === 'smpl') {
-      this.smplMotionPlayer.reset();
-    }
+
+    this.sceneController.syncGroundToCurrentRobot();
+    this.sceneController.syncViewToCurrentRobot();
   }
 
   private seekActiveMotion(frameIndex: number): void {

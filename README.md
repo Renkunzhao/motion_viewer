@@ -50,6 +50,7 @@ Its core purpose is to quickly load robot models in the browser and play motion 
 - `smpl_webuser` here refers to the historical Python package naming from SMPL release, not browser/Web runtime
 - Frontend SMPL PKL parsing now relies on `pickleparser` only (no project-local fallback pickle parser)
 - Unsupported drops can trigger a temporary red warning panel, then return to ready layout while keeping the last warning in the lower-left hint
+- Ground/grid auto-height sync now runs only on model/motion switch and reset; it no longer updates frame-by-frame during playback
 - Controls: `Space` play/pause, `R` reset to frame 1, `Tab` switch view mode, `Shift` toggle SMPL mesh/skeleton, slider seek
 - CSV playback FPS is editable in the Motion panel via the `FPS` input box (takes effect immediately)
 
