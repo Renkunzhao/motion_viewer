@@ -44,6 +44,28 @@
         "kind": "bvh",
         "path": "presets/motions/LAFAN1/bvh/dance1_subject1.bvh"
       }
+    },
+    {
+      "id": "smplh-amass-extended3",
+      "label": "SMPL-H G + Male2MartialArtsExtended_c3d 3_poses",
+      "description": "SMPL-H model with AMASS Extended 3 motion preview.",
+      "model": {
+        "files": [
+          {
+            "path": "presets/SMPL+H G/Male2MartialArtsExtended_c3d/model.npz",
+            "mapAs": "presets/smplh/model.npz"
+          }
+        ]
+      },
+      "motion": {
+        "kind": "smpl",
+        "files": [
+          {
+            "path": "presets/SMPL+H G/Male2MartialArtsExtended_c3d/Extended 3_poses.npz",
+            "mapAs": "presets/smplh/Extended_3_poses.npz"
+          }
+        ]
+      }
     }
   ]
 }

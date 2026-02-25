@@ -28,6 +28,7 @@ Its core purpose is to quickly load robot models in the browser and play motion 
   - Row 1: `LAFAN1` + `lafan1-resolved` with model `Skeleton`
   - Row 2: `unitree-LAFAN1-Retarget` with one combined model link `G1, H1, H1-2 (.urdf)`
   - Row 3: `AMASS` with models `SMPL (.npz/.pkl)` / `SMPL-H (.npz/.pkl)` / `SMPL-X (.npz/.pkl)`
+- A polished bilingual legal notice is shown below the preset dropdown: demo-only use, no direct download, source-license reminder, and infringement contact
 - Keyboard shortcut hints are kept in the right status panel
 - Default view mode is `root lock` for URDF / CSV / BVH / SMPL playback; press `Tab` to switch to `free`
 - URDF (.urdf): drag and drop folder/multi-file set, or use Select Folder/Select Files
@@ -68,6 +69,11 @@ Each preset can define:
 - Legacy format is still supported:
   - `model.files[]` with optional `selectedUrdfPath`
   - `motion.files[]` with optional `selectedMotionPath`
+
+Current bundled examples include URDF+CSV/BVH presets and one SMPL-H preset:
+- Dropdown label: `SMPL-H G + Male2MartialArtsExtended_c3d 3_poses`
+- Model: `presets/SMPL+H G/Male2MartialArtsExtended_c3d/model.npz`
+- Motion: `presets/SMPL+H G/Male2MartialArtsExtended_c3d/Extended 3_poses.npz`
 
 Notes:
 

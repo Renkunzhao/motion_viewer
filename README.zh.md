@@ -28,6 +28,7 @@
   - 第 1 行：`LAFAN1` + `lafan1-resolved`，模型为 `Skeleton`
   - 第 2 行：`unitree-LAFAN1-Retarget`，模型使用一个合并链接 `G1, H1, H1-2 (.urdf)`
   - 第 3 行：`AMASS`，模型为 `SMPL (.npz/.pkl)` / `SMPL-H (.npz/.pkl)` / `SMPL-X (.npz/.pkl)`
+- 预置下拉框下方提供润色后的中英双语法律提示：仅用于演示、不提供下载、提醒遵循原始来源许可，并给出侵权联系邮箱
 - 右侧状态面板保留快捷键说明
 - URDF / CSV / BVH / SMPL 播放默认视角为 `root lock`；可按 `Tab` 切换到 `free`
 - URDF (.urdf)：支持拖拽文件夹/多文件集合，或使用 Select Folder / Select Files
@@ -67,6 +68,11 @@
 - `motion`（推荐）：配置 `kind: "csv" | "bvh" | "smpl"` 与 `path`
 - 旧格式仍兼容：`model.files[]`（可选 `selectedUrdfPath`）
 - 旧格式仍兼容：`motion.files[]`（可选 `selectedMotionPath`）
+
+当前内置示例除 URDF+CSV/BVH 外，还新增了一个 SMPL-H 预置：
+- 下拉显示：`SMPL-H G + Male2MartialArtsExtended_c3d 3_poses`
+- 模型：`presets/SMPL+H G/Male2MartialArtsExtended_c3d/model.npz`
+- 动作：`presets/SMPL+H G/Male2MartialArtsExtended_c3d/Extended 3_poses.npz`
 
 说明：
 

@@ -367,6 +367,19 @@ body {
   margin-top: 0.68rem;
 }
 
+.preset-picker__notice {
+  margin: 0.48rem 0 0;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.preset-picker__notice a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+
 .urdf-list-section {
   margin-top: 0.7rem;
 }
