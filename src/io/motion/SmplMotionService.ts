@@ -28,6 +28,10 @@ const REQUIRED_MODEL_ENTRIES = [
 
 const REQUIRED_MOTION_ENTRIES = ['poses.npy', 'trans.npy'] as const;
 const SKELETON_HIGHLIGHT_COLOR = '#7ef9ff';
+const OMOMO_TRANS_TO_JOINT_FALLBACK: [number, number, number] = [-0.0011, 0.3795, -0.0194];
+const OMOMO_SEQUENCE_NAME_PATTERN = /^sub\d+_[a-z0-9]+_\d+$/i;
+
+type SmplGender = 'male' | 'female' | 'neutral';
 
 interface SmplModelData {
   vertexCount: number;
@@ -72,12 +76,14 @@ export interface SmplMotionClip {
   trans: Float32Array;
   translationOffsetXY: [number, number];
   objectMotion: SmplObjectMotionTrack | null;
+  objectAlignmentOffset: [number, number, number] | null;
   objectName: string | null;
 }
 
 export interface SmplMotionLoadResult {
   selectedModelPath: string;
   selectedMotionPath: string;
+  availableModelPaths: string[];
   sceneObject: any;
   playbackTarget: SmplPlaybackTarget;
   clip: SmplMotionClip;
@@ -88,15 +94,19 @@ export interface SmplMotionLoadResult {
   fps: number;
   vertexCount: number;
   jointCount: number;
+  motionGender: SmplGender | null;
+  modelGender: SmplGender | null;
   hasObjectMotion: boolean;
   warnings: string[];
 }
 
 export interface SmplModelLoadResult {
   selectedModelPath: string;
+  availableModelPaths: string[];
   sceneObject: any;
   playbackTarget: SmplPlaybackTarget;
   modelName: string;
+  modelGender: SmplGender | null;
   vertexCount: number;
   jointCount: number;
   warnings: string[];
@@ -163,6 +173,44 @@ function inferObjectNameFromSeqLikeName(rawName: string): string | null {
   }
 
   return normalizeObjectNameToken(tokens[1] ?? '');
+}
+
+function normalizeGenderToken(raw: string): SmplGender | null {
+  const token = raw.trim().toLowerCase();
+  if (!token) {
+    return null;
+  }
+
+  if (token.includes('female') || token === 'f') {
+    return 'female';
+  }
+  if (token.includes('male') || token === 'm') {
+    return 'male';
+  }
+  if (token.includes('neutral') || token.includes('neuter') || token === 'n') {
+    return 'neutral';
+  }
+  return null;
+}
+
+function inferModelGenderFromPath(path: string): SmplGender | null {
+  const normalized = normalizePath(path).toLowerCase();
+  if (
+    /(^|[^a-z])female([^a-z]|$)/.test(normalized) ||
+    /(?:^|[_/.-])f(?:[_/.-]|$)/.test(normalized)
+  ) {
+    return 'female';
+  }
+  if (
+    /(^|[^a-z])male([^a-z]|$)/.test(normalized) ||
+    /(?:^|[_/.-])m(?:[_/.-]|$)/.test(normalized)
+  ) {
+    return 'male';
+  }
+  if (/(^|[^a-z])neutral([^a-z]|$)/.test(normalized)) {
+    return 'neutral';
+  }
+  return null;
 }
 
 function isSmplWebuserModelPklPath(path: string): boolean {
@@ -375,6 +423,61 @@ function mergeFileMaps(left: DroppedFileMap, right: DroppedFileMap): DroppedFile
   return merged;
 }
 
+type SmplModelSelectionReason =
+  | 'first'
+  | 'gender_match'
+  | 'gender_multi_match'
+  | 'neutral_fallback'
+  | 'no_gender_match';
+
+interface SmplModelSelectionDecision {
+  path: string;
+  reason: SmplModelSelectionReason;
+}
+
+function selectModelPathForMotionGender(
+  modelPaths: string[],
+  motionGender: SmplGender | null,
+): SmplModelSelectionDecision | null {
+  const firstPath = modelPaths[0] ?? null;
+  if (!firstPath) {
+    return null;
+  }
+  if (!motionGender || motionGender === 'neutral') {
+    return {
+      path: firstPath,
+      reason: 'first',
+    };
+  }
+
+  const exactMatches = modelPaths.filter((path) => inferModelGenderFromPath(path) === motionGender);
+  if (exactMatches.length === 1) {
+    return {
+      path: exactMatches[0] ?? firstPath,
+      reason: 'gender_match',
+    };
+  }
+  if (exactMatches.length > 1) {
+    return {
+      path: exactMatches[0] ?? firstPath,
+      reason: 'gender_multi_match',
+    };
+  }
+
+  const neutralMatches = modelPaths.filter((path) => inferModelGenderFromPath(path) === 'neutral');
+  if (neutralMatches.length > 0) {
+    return {
+      path: neutralMatches[0] ?? firstPath,
+      reason: 'neutral_fallback',
+    };
+  }
+
+  return {
+    path: firstPath,
+    reason: 'no_gender_match',
+  };
+}
+
 export class SmplMotionService {
   async loadModelOnlyFromDroppedFiles(
     fileMap: DroppedFileMap,
@@ -411,17 +514,20 @@ export class SmplMotionService {
 
     const modelName = buildDisplayName(selectedModelPath, 'smpl_model');
     const model = await this.loadModelFromFile(modelFile, selectedModelPath, null, warnings);
+    const modelGender = inferModelGenderFromPath(selectedModelPath);
     const rig = this.buildRig(model, modelName);
     rig.sceneObject.userData.rootTrackNode = rig.bones[0] ?? null;
 
     return {
       selectedModelPath,
+      availableModelPaths: scan.modelPaths,
       sceneObject: rig.sceneObject,
       playbackTarget: {
         rootGroup: rig.rootGroup,
         bones: rig.bones,
       },
       modelName,
+      modelGender,
       vertexCount: model.vertexCount,
       jointCount: model.jointCount,
       warnings: [...warnings],
@@ -476,17 +582,7 @@ export class SmplMotionService {
     preferredMotionPath?: string,
   ): Promise<SmplMotionLoadResult> {
     const scan = await this.scanDroppedNpzFiles(fileMap);
-
-    let selectedModelPath: string | null = null;
-    if (preferredModelPath) {
-      const normalized = normalizePath(preferredModelPath);
-      selectedModelPath = scan.modelPaths.find((path) => path === normalized) ?? null;
-      if (!selectedModelPath) {
-        throw new Error(`Requested SMPL model not found: ${preferredModelPath}`);
-      }
-    } else {
-      selectedModelPath = scan.modelPaths[0] ?? null;
-    }
+    const warnings = new Set<string>();
 
     let selectedMotionPath: string | null = null;
     if (preferredMotionPath) {
@@ -499,37 +595,88 @@ export class SmplMotionService {
       selectedMotionPath = scan.motionPaths[0] ?? null;
     }
 
-    if (!selectedModelPath && scan.modelPaths.length === 0) {
-      throw new Error('No SMPL model found. Supported model files: .npz or smpl_webuser basicmodel_*.pkl.');
-    }
     if (!selectedMotionPath && scan.motionPaths.length === 0) {
       throw new Error('No SMPL motion .npz found. Expected keys: poses/trans.');
     }
-
-    if (!selectedModelPath || !selectedMotionPath) {
+    if (!selectedMotionPath) {
       throw new Error('Both SMPL model and motion .npz files are required.');
-    }
-
-    const modelFile = fileMap.get(selectedModelPath);
-    const motionFile = fileMap.get(selectedMotionPath);
-    if (!modelFile || !motionFile) {
-      throw new Error('Selected SMPL model/motion files are missing from file map.');
-    }
-
-    const warnings = new Set<string>();
-    if (!preferredModelPath && scan.modelPaths.length > 1) {
-      warnings.add(`Multiple SMPL model files found. Auto-selected ${selectedModelPath}.`);
     }
     if (!preferredMotionPath && scan.motionPaths.length > 1) {
       warnings.add(`Multiple SMPL motion files found. Auto-selected ${selectedMotionPath}.`);
     }
 
+    const motionFile = fileMap.get(selectedMotionPath);
+    if (!motionFile) {
+      throw new Error(`Selected SMPL motion file is missing from file map: ${selectedMotionPath}`);
+    }
+
     const motionArchive = await parseNpzFile(motionFile);
-    const objectName = await this.resolveMotionObjectName(
+    const sequenceName = await this.resolveMotionSequenceName(
       motionArchive,
       selectedMotionPath,
       warnings,
     );
+    const motionGender = await this.resolveMotionGender(motionArchive, warnings);
+    if (!motionGender && this.isLikelyOmomoSequence(sequenceName, selectedMotionPath)) {
+      warnings.add('SMPL gender.npy missing; gender mismatch check was skipped.');
+    }
+    const objectName = await this.resolveMotionObjectName(
+      motionArchive,
+      selectedMotionPath,
+      warnings,
+      sequenceName,
+    );
+
+    let selectedModelPath: string | null = null;
+    let modelSelectionDecision: SmplModelSelectionDecision | null = null;
+    if (preferredModelPath) {
+      const normalized = normalizePath(preferredModelPath);
+      selectedModelPath = scan.modelPaths.find((path) => path === normalized) ?? null;
+      if (!selectedModelPath) {
+        throw new Error(`Requested SMPL model not found: ${preferredModelPath}`);
+      }
+    } else if (scan.modelPaths.length > 1) {
+      modelSelectionDecision = selectModelPathForMotionGender(scan.modelPaths, motionGender);
+      selectedModelPath = modelSelectionDecision?.path ?? null;
+      if (selectedModelPath && modelSelectionDecision) {
+        if (modelSelectionDecision.reason === 'gender_match') {
+          warnings.add(
+            `Motion gender is ${motionGender}; auto-selected matching model ${selectedModelPath}.`,
+          );
+        } else if (modelSelectionDecision.reason === 'gender_multi_match') {
+          warnings.add(
+            `Motion gender is ${motionGender}; multiple matching models found, auto-selected ${selectedModelPath}.`,
+          );
+        } else if (modelSelectionDecision.reason === 'neutral_fallback') {
+          warnings.add(
+            `Motion gender is ${motionGender}; no exact model match found, auto-selected neutral model ${selectedModelPath}.`,
+          );
+        } else if (modelSelectionDecision.reason === 'no_gender_match') {
+          warnings.add(
+            `Motion gender is ${motionGender}; no matching model gender found, auto-selected ${selectedModelPath}.`,
+          );
+        } else {
+          warnings.add(`Multiple SMPL model files found. Auto-selected ${selectedModelPath}.`);
+        }
+      }
+    } else {
+      selectedModelPath = scan.modelPaths[0] ?? null;
+    }
+
+    if (!selectedModelPath && scan.modelPaths.length === 0) {
+      throw new Error('No SMPL model found. Supported model files: .npz or smpl_webuser basicmodel_*.pkl.');
+    }
+    if (!selectedModelPath) {
+      throw new Error('Both SMPL model and motion .npz files are required.');
+    }
+    if (!preferredModelPath && scan.modelPaths.length > 1 && !modelSelectionDecision) {
+      warnings.add(`Multiple SMPL model files found. Auto-selected ${selectedModelPath}.`);
+    }
+
+    const modelFile = fileMap.get(selectedModelPath);
+    if (!modelFile) {
+      throw new Error(`Selected SMPL model file is missing from file map: ${selectedModelPath}`);
+    }
 
     const clipName = buildDisplayName(selectedMotionPath, 'smpl_motion.npz');
     const modelName = buildDisplayName(selectedModelPath, 'smpl_model');
@@ -578,6 +725,24 @@ export class SmplMotionService {
 
     const model = await this.loadModelFromFile(modelFile, selectedModelPath, motionBetas, warnings);
     const rig = this.buildRig(model, modelName);
+    const modelGender = inferModelGenderFromPath(selectedModelPath);
+    const hasStrictGenderMismatch =
+      Boolean(motionGender) &&
+      Boolean(modelGender) &&
+      motionGender !== 'neutral' &&
+      modelGender !== 'neutral' &&
+      motionGender !== modelGender;
+    if (hasStrictGenderMismatch) {
+      throw new Error(
+        `SMPL gender mismatch: motion is ${motionGender}, model is ${modelGender}. Load a matching ${motionGender} model.`,
+      );
+    }
+    if (!modelGender) {
+      const motionGenderLabel = motionGender ?? 'unknown';
+      warnings.add(
+        `Current model gender: unknown (motion: ${motionGenderLabel}). If motion looks incorrect, verify model and motion gender match.`,
+      );
+    }
 
     const jointCountFromPose = Math.floor(poseStride / 3);
     const usableJointCount = Math.min(model.jointCount, jointCountFromPose);
@@ -760,6 +925,27 @@ export class SmplMotionService {
       );
     }
 
+    const rootJointRestOffset: [number, number, number] = [
+      model.jointRestPositions[0] ?? 0,
+      model.jointRestPositions[1] ?? 0,
+      model.jointRestPositions[2] ?? 0,
+    ];
+    let transToJointOffset = await this.resolveMotionTransToJointOffset(motionArchive, warnings);
+    if (!transToJointOffset && objectMotion && this.isLikelyOmomoSequence(sequenceName, selectedMotionPath)) {
+      transToJointOffset = [...OMOMO_TRANS_TO_JOINT_FALLBACK];
+      warnings.add(
+        'SMPL trans2joint.npy missing; applied OMOMO fallback trans2joint for object alignment.',
+      );
+    }
+    const objectAlignmentOffset: [number, number, number] | null =
+      objectMotion && transToJointOffset
+        ? [
+            rootJointRestOffset[0] + transToJointOffset[0],
+            rootJointRestOffset[1] + transToJointOffset[1],
+            rootJointRestOffset[2] + transToJointOffset[2],
+          ]
+        : null;
+
     const fps = motionFps ? Math.max(1, motionFps.toScalarNumber()) : 30;
     const translationOffsetXY: [number, number] = [trans[0] ?? 0, trans[1] ?? 0];
 
@@ -774,6 +960,7 @@ export class SmplMotionService {
       trans,
       translationOffsetXY,
       objectMotion,
+      objectAlignmentOffset,
       objectName,
     };
 
@@ -782,6 +969,7 @@ export class SmplMotionService {
     return {
       selectedModelPath,
       selectedMotionPath,
+      availableModelPaths: scan.modelPaths,
       sceneObject: rig.sceneObject,
       playbackTarget: {
         rootGroup: rig.rootGroup,
@@ -795,6 +983,8 @@ export class SmplMotionService {
       fps,
       vertexCount: model.vertexCount,
       jointCount: usableJointCount,
+      motionGender,
+      modelGender,
       hasObjectMotion: Boolean(objectMotion),
       warnings: [...warnings],
     };
@@ -812,24 +1002,9 @@ export class SmplMotionService {
     motionArchive: Awaited<ReturnType<typeof parseNpzFile>>,
     selectedMotionPath: string,
     warnings: Set<string>,
+    sequenceNameHint: string | null = null,
   ): Promise<string | null> {
-    const readScalarStringEntry = async (entryName: string): Promise<string | null> => {
-      if (!motionArchive.hasFile(entryName)) {
-        return null;
-      }
-
-      try {
-        const scalar = await motionArchive.readNpy(entryName);
-        const value = scalar.toScalarString().trim();
-        return value || null;
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        warnings.add(`SMPL ${entryName} could not be parsed as scalar string (${reason}).`);
-        return null;
-      }
-    };
-
-    const motionObjectName = await readScalarStringEntry('obj_name.npy');
+    const motionObjectName = await this.readScalarStringEntry(motionArchive, 'obj_name.npy', warnings);
     if (motionObjectName) {
       const normalized = normalizeObjectNameToken(motionObjectName);
       if (normalized) {
@@ -837,7 +1012,8 @@ export class SmplMotionService {
       }
     }
 
-    const sequenceName = await readScalarStringEntry('seq_name.npy');
+    const sequenceName =
+      sequenceNameHint ?? (await this.readScalarStringEntry(motionArchive, 'seq_name.npy', warnings));
     if (sequenceName) {
       const inferredFromSeq = inferObjectNameFromSeqLikeName(sequenceName);
       if (inferredFromSeq) {
@@ -850,6 +1026,111 @@ export class SmplMotionService {
       '',
     );
     return inferObjectNameFromSeqLikeName(sourceStem);
+  }
+
+  private async readScalarStringEntry(
+    motionArchive: Awaited<ReturnType<typeof parseNpzFile>>,
+    entryName: string,
+    warnings: Set<string>,
+  ): Promise<string | null> {
+    if (!motionArchive.hasFile(entryName)) {
+      return null;
+    }
+
+    try {
+      const scalar = await motionArchive.readNpy(entryName);
+      const value = scalar.toScalarString().trim();
+      return value || null;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      warnings.add(`SMPL ${entryName} could not be parsed as scalar string (${reason}).`);
+      return null;
+    }
+  }
+
+  private async resolveMotionSequenceName(
+    motionArchive: Awaited<ReturnType<typeof parseNpzFile>>,
+    selectedMotionPath: string,
+    warnings: Set<string>,
+  ): Promise<string | null> {
+    const sequenceName = await this.readScalarStringEntry(motionArchive, 'seq_name.npy', warnings);
+    if (sequenceName) {
+      return sequenceName;
+    }
+
+    const sourceStem = (getBaseName(selectedMotionPath) || selectedMotionPath).replace(
+      /\.[^/.]+$/,
+      '',
+    );
+    return sourceStem || null;
+  }
+
+  private async resolveMotionGender(
+    motionArchive: Awaited<ReturnType<typeof parseNpzFile>>,
+    warnings: Set<string>,
+  ): Promise<SmplGender | null> {
+    const genderRaw = await this.readScalarStringEntry(motionArchive, 'gender.npy', warnings);
+    if (!genderRaw) {
+      return null;
+    }
+
+    const normalized = normalizeGenderToken(genderRaw);
+    if (!normalized) {
+      warnings.add(`SMPL gender.npy value "${genderRaw}" is not recognized; gender mismatch check skipped.`);
+      return null;
+    }
+    return normalized;
+  }
+
+  private isLikelyOmomoSequence(sequenceName: string | null, selectedMotionPath: string): boolean {
+    if (sequenceName && OMOMO_SEQUENCE_NAME_PATTERN.test(sequenceName)) {
+      return true;
+    }
+
+    const sourceStem = (getBaseName(selectedMotionPath) || selectedMotionPath).replace(
+      /\.[^/.]+$/,
+      '',
+    );
+    if (OMOMO_SEQUENCE_NAME_PATTERN.test(sourceStem)) {
+      return true;
+    }
+
+    const normalizedPath = normalizePath(selectedMotionPath);
+    return normalizedPath.includes('/omomo/');
+  }
+
+  private async resolveMotionTransToJointOffset(
+    motionArchive: Awaited<ReturnType<typeof parseNpzFile>>,
+    warnings: Set<string>,
+  ): Promise<[number, number, number] | null> {
+    if (!motionArchive.hasFile('trans2joint.npy')) {
+      return null;
+    }
+
+    try {
+      const raw = await motionArchive.readNpy('trans2joint.npy');
+      const shape = raw.shape;
+      const values = raw.toNumberArray();
+
+      if (shape.length === 1 && (shape[0] ?? 0) >= 3) {
+        return [values[0] ?? 0, values[1] ?? 0, values[2] ?? 0];
+      }
+      if (shape.length === 2 && (shape[0] ?? 0) === 1 && (shape[1] ?? 0) >= 3) {
+        return [values[0] ?? 0, values[1] ?? 0, values[2] ?? 0];
+      }
+      if (shape.length === 2 && (shape[1] ?? 0) === 1 && (shape[0] ?? 0) >= 3) {
+        return [values[0] ?? 0, values[1] ?? 0, values[2] ?? 0];
+      }
+
+      warnings.add(
+        `SMPL trans2joint.npy has unsupported shape [${shape.join(', ')}]; object alignment fallback may be used.`,
+      );
+      return null;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      warnings.add(`SMPL trans2joint.npy could not be parsed (${reason}).`);
+      return null;
+    }
   }
 
   private async loadModelFromFile(

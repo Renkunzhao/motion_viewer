@@ -4,7 +4,7 @@
 Output files are compatible with this web viewer's SMPL motion path:
 - required: poses.npy, trans.npy
 - optional: betas.npy, mocap_frame_rate.npy
-- omomo extras: obj_trans.npy, obj_rot_mat.npy, obj_scale.npy
+- omomo extras: obj_trans.npy, obj_rot_mat.npy, obj_scale.npy, trans2joint.npy
 """
 
 from __future__ import annotations
@@ -52,6 +52,17 @@ def normalize_obj_scale(value: object) -> np.ndarray:
     if array.ndim == 2 and array.shape[1] == 1:
         return array[:, 0]
     raise ValueError(f"obj_scale shape not supported: {array.shape}")
+
+
+def normalize_trans2joint(value: object) -> np.ndarray:
+    array = np.asarray(value, dtype=np.float32)
+    if array.ndim == 1 and array.shape[0] >= 3:
+        return array[:3]
+    if array.ndim == 2 and array.shape[0] == 1 and array.shape[1] >= 3:
+        return array[0, :3]
+    if array.ndim == 2 and array.shape[1] == 1 and array.shape[0] >= 3:
+        return array[:3, 0]
+    raise ValueError(f"trans2joint shape not supported: {array.shape}")
 
 
 def extract_gender(value: object) -> str:
@@ -115,6 +126,9 @@ def convert_split(
         obj_trans = normalize_obj_trans(entry["obj_trans"])[:frame_count]
         obj_rot_mat = to_float_array(entry["obj_rot"], (3, 3), f"{seq_name}.obj_rot")[:frame_count]
         obj_scale = normalize_obj_scale(entry["obj_scale"])[:frame_count]
+        trans2joint = normalize_trans2joint(
+            entry.get("trans2joint", np.asarray([0.0, 0.0, 0.0], dtype=np.float32))
+        )
 
         payload = {
             "poses": poses,
@@ -127,6 +141,7 @@ def convert_split(
             "obj_trans": obj_trans.astype(np.float32),
             "obj_rot_mat": obj_rot_mat.astype(np.float32),
             "obj_scale": obj_scale.astype(np.float32),
+            "trans2joint": trans2joint.astype(np.float32),
         }
 
         # OMOMO has extra dynamic bottom-part tracks for vacuum/mop.

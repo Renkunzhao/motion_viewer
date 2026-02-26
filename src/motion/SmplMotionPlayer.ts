@@ -230,13 +230,19 @@ export class SmplMotionPlayer {
 
     if (this.clip.objectMotion && this.target.objectRoot) {
       const objectMotion = this.clip.objectMotion;
+      const objectAlignmentOffset = this.clip.objectAlignmentOffset;
       const objectFrame = Math.min(frame, Math.max(objectMotion.frameCount - 1, 0));
       const objectTransBase = objectFrame * 3;
       const objectX =
-        (objectMotion.trans[objectTransBase] ?? 0) - (this.clip.translationOffsetXY[0] ?? 0);
+        (objectMotion.trans[objectTransBase] ?? 0) -
+        (this.clip.translationOffsetXY[0] ?? 0) +
+        (objectAlignmentOffset?.[0] ?? 0);
       const objectY =
-        (objectMotion.trans[objectTransBase + 1] ?? 0) - (this.clip.translationOffsetXY[1] ?? 0);
-      const objectZ = objectMotion.trans[objectTransBase + 2] ?? 0;
+        (objectMotion.trans[objectTransBase + 1] ?? 0) -
+        (this.clip.translationOffsetXY[1] ?? 0) +
+        (objectAlignmentOffset?.[1] ?? 0);
+      const objectZ =
+        (objectMotion.trans[objectTransBase + 2] ?? 0) + (objectAlignmentOffset?.[2] ?? 0);
 
       this.target.objectRoot.position.set(objectX, objectY, objectZ);
 

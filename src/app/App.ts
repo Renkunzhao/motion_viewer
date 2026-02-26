@@ -348,6 +348,35 @@ function formatCapturedObjLabel(pathOrFileName: string): string {
   return core;
 }
 
+function inferSmplGenderFromPath(path: string): string | null {
+  const normalized = normalizePath(path).toLowerCase();
+  if (
+    /(^|[^a-z])female([^a-z]|$)/.test(normalized) ||
+    /(?:^|[_/.-])f(?:[_/.-]|$)/.test(normalized)
+  ) {
+    return 'female';
+  }
+  if (
+    /(^|[^a-z])male([^a-z]|$)/.test(normalized) ||
+    /(?:^|[_/.-])m(?:[_/.-]|$)/.test(normalized)
+  ) {
+    return 'male';
+  }
+  if (/(^|[^a-z])neutral([^a-z]|$)/.test(normalized)) {
+    return 'neutral';
+  }
+  return null;
+}
+
+function formatSmplModelLabel(path: string): string {
+  const baseName = getBaseName(path) || path;
+  const gender = inferSmplGenderFromPath(path);
+  if (!gender) {
+    return baseName;
+  }
+  return `${baseName} (${gender})`;
+}
+
 export class AppController {
   private readonly appRoot: HTMLDivElement;
   private readonly sceneController: SceneController;
@@ -366,6 +395,8 @@ export class AppController {
   private readonly statusWarnings: HTMLUListElement;
   private readonly urdfListSection: HTMLElement;
   private readonly urdfList: HTMLUListElement;
+  private readonly smplModelListSection: HTMLElement;
+  private readonly smplModelList: HTMLUListElement;
   private readonly showVisualButton: HTMLButtonElement;
   private readonly showCollisionButton: HTMLButtonElement;
   private readonly motionControlsSection: HTMLElement;
@@ -415,6 +446,7 @@ export class AppController {
     | {
         modelName: string;
         modelSourcePath: string;
+        modelGender: string | null;
         jointCount: number;
         vertexCount: number;
       }
@@ -429,6 +461,8 @@ export class AppController {
         fps: number;
         jointCount: number;
         vertexCount: number;
+        motionGender: string | null;
+        modelGender: string | null;
         hasObjectMotion: boolean;
         objectName: string | null;
       }
@@ -456,6 +490,8 @@ export class AppController {
         skeletonHelper: any;
       }
     | null = null;
+  private availableSmplModelPaths: string[] = [];
+  private selectedSmplModelPath: string | null = null;
   private recoverReadyTimer: number | null = null;
   private recoverableDropHint: string | null = null;
   private presetManifest: ViewerPresetManifest | null = null;
@@ -588,6 +624,25 @@ export class AppController {
     void this.loadSelectedUrdf(urdfPath);
   };
 
+  private readonly onSmplModelListClick = (event: Event): void => {
+    if (this.viewerState === 'loading') {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>('button[data-smpl-model-path]');
+    if (!button) {
+      return;
+    }
+
+    const smplModelPath = button.dataset.smplModelPath;
+    if (!smplModelPath || smplModelPath === this.selectedSmplModelPath) {
+      return;
+    }
+
+    void this.loadSelectedSmplModel(smplModelPath);
+  };
+
   private readonly onMotionPlayClick = (): void => {
     if (!this.hasAnyMotion()) {
       return;
@@ -677,6 +732,8 @@ export class AppController {
     this.statusWarnings = requireElement<HTMLUListElement>('status-warnings');
     this.urdfListSection = requireElement<HTMLElement>('urdf-list-section');
     this.urdfList = requireElement<HTMLUListElement>('urdf-list');
+    this.smplModelListSection = requireElement<HTMLElement>('smpl-model-list-section');
+    this.smplModelList = requireElement<HTMLUListElement>('smpl-model-list');
     this.showVisualButton = requireElement<HTMLButtonElement>('show-visual-btn');
     this.showCollisionButton = requireElement<HTMLButtonElement>('show-collision-btn');
     this.motionControlsSection = requireElement<HTMLElement>('motion-controls-section');
@@ -799,6 +856,7 @@ export class AppController {
     this.showVisualButton.addEventListener('click', this.onShowVisualClick);
     this.showCollisionButton.addEventListener('click', this.onShowCollisionClick);
     this.urdfList.addEventListener('click', this.onUrdfListClick);
+    this.smplModelList.addEventListener('click', this.onSmplModelListClick);
     this.motionPlayButton.addEventListener('click', this.onMotionPlayClick);
     this.motionResetButton.addEventListener('click', this.onMotionResetClick);
     this.motionFpsInput.addEventListener('input', this.onMotionFpsInput);
@@ -810,6 +868,7 @@ export class AppController {
     this.syncMotionControls();
     this.syncPresetControls();
     this.syncObjControls();
+    this.renderSmplModelList();
     this.renderState();
     void this.initializePresetManifest();
   }
@@ -843,6 +902,7 @@ export class AppController {
     this.clearMotionPlayback();
     this.clearCurrentObjState();
     this.renderUrdfList();
+    this.renderSmplModelList();
     this.setState('idle');
   }
 
@@ -862,6 +922,7 @@ export class AppController {
     this.showVisualButton.removeEventListener('click', this.onShowVisualClick);
     this.showCollisionButton.removeEventListener('click', this.onShowCollisionClick);
     this.urdfList.removeEventListener('click', this.onUrdfListClick);
+    this.smplModelList.removeEventListener('click', this.onSmplModelListClick);
     this.motionPlayButton.removeEventListener('click', this.onMotionPlayClick);
     this.motionResetButton.removeEventListener('click', this.onMotionResetClick);
     this.motionFpsInput.removeEventListener('input', this.onMotionFpsInput);
@@ -939,16 +1000,13 @@ export class AppController {
 
       if (this.currentSmplFileMap && this.currentSmplModel) {
         const preferredDroppedMotionPath = smplScan.motionPaths[0];
-        const currentModelOnlyFileMap =
-          this.getCurrentSmplModelOnlyFileMap(this.currentSmplModel.modelSourcePath) ??
-          this.currentSmplFileMap;
         const mergedSmplFileMap = this.smplMotionService.mergeDroppedFileMaps(
-          currentModelOnlyFileMap,
+          this.currentSmplFileMap,
           fileMap,
         );
         await this.loadSmplMotionFromDroppedFiles(
           mergedSmplFileMap,
-          this.currentSmplModel.modelSourcePath,
+          undefined,
           preferredDroppedMotionPath,
         );
         return;
@@ -1008,6 +1066,23 @@ export class AppController {
         detail: reason,
       });
     }
+  }
+
+  private async loadSelectedSmplModel(smplModelPath: string): Promise<void> {
+    if (!this.currentSmplFileMap) {
+      return;
+    }
+
+    if (this.currentMotionKind === 'smpl' && this.currentSmplMotion) {
+      await this.loadSmplMotionFromDroppedFiles(
+        this.currentSmplFileMap,
+        smplModelPath,
+        this.currentSmplMotion.motionSourcePath,
+      );
+      return;
+    }
+
+    await this.loadSmplModelFromDroppedFiles(this.currentSmplFileMap, smplModelPath);
   }
 
   private async loadMotionFromDroppedFiles(
@@ -1202,6 +1277,7 @@ export class AppController {
       this.currentSmplModel = {
         modelName: result.modelName,
         modelSourcePath: result.selectedModelPath,
+        modelGender: result.modelGender,
         jointCount: result.jointCount,
         vertexCount: result.vertexCount,
       };
@@ -1214,10 +1290,15 @@ export class AppController {
         fps: result.fps,
         jointCount: result.jointCount,
         vertexCount: result.vertexCount,
+        motionGender: result.motionGender,
+        modelGender: result.modelGender,
         hasObjectMotion: result.hasObjectMotion,
         objectName: result.objectName,
       };
       this.currentSmplFileMap = fileMap;
+      this.availableSmplModelPaths = [...result.availableModelPaths];
+      this.selectedSmplModelPath = result.selectedModelPath;
+      this.renderSmplModelList();
       this.currentMotionKind = 'smpl';
       this.currentMotionSourcePath = result.selectedMotionPath;
       this.motionWarnings = [...result.warnings, ...objectWarnings];
@@ -1286,11 +1367,15 @@ export class AppController {
       this.currentSmplModel = {
         modelName: result.modelName,
         modelSourcePath: result.selectedModelPath,
+        modelGender: result.modelGender,
         jointCount: result.jointCount,
         vertexCount: result.vertexCount,
       };
       this.currentSmplMotion = null;
       this.currentSmplFileMap = fileMap;
+      this.availableSmplModelPaths = [...result.availableModelPaths];
+      this.selectedSmplModelPath = result.selectedModelPath;
+      this.renderSmplModelList();
       this.currentMotionKind = null;
       this.currentMotionSourcePath = null;
       this.motionWarnings = [...result.warnings, ...objectWarnings];
@@ -1388,12 +1473,13 @@ export class AppController {
 
     const desiredObjectName = normalizeObjectToken(motionObjectName ?? '');
     if (desiredObjectName) {
-      if (
-        this.currentObjFileMap &&
+      const hasCurrentObj = Boolean(this.currentObjFileMap && this.currentObjModel);
+      const currentObjMatchesDesired = Boolean(
         this.currentObjModel &&
-        (preferCurrentObj ||
-          this.doesObjPathMatchObjectName(this.currentObjModel.modelSourcePath, desiredObjectName))
-      ) {
+          this.doesObjPathMatchObjectName(this.currentObjModel.modelSourcePath, desiredObjectName),
+      );
+
+      if (hasCurrentObj && currentObjMatchesDesired && this.currentObjFileMap && this.currentObjModel) {
         try {
           const result = await this.objLoadService.loadFromDroppedFiles(
             this.currentObjFileMap,
@@ -1413,12 +1499,16 @@ export class AppController {
         }
       }
 
-      if (!preferCurrentObj) {
-        const autoLoad = await this.loadCapturedObjForMotionObjectName(desiredObjectName);
-        warnings.push(...autoLoad.warnings);
-        if (autoLoad.result) {
-          return { result: autoLoad.result, warnings };
-        }
+      const autoLoad = await this.loadCapturedObjForMotionObjectName(desiredObjectName);
+      warnings.push(...autoLoad.warnings);
+      if (autoLoad.result) {
+        return { result: autoLoad.result, warnings };
+      }
+
+      if (preferCurrentObj && hasCurrentObj && !currentObjMatchesDesired) {
+        warnings.push(
+          `Current OBJ does not match motion object "${desiredObjectName}". Falling back to current OBJ because no matching captured OBJ was loaded.`,
+        );
       }
     }
 
@@ -1545,26 +1635,6 @@ export class AppController {
     this.syncObjSelectionToCurrentModel();
   }
 
-  private getCurrentSmplModelOnlyFileMap(modelPath: string): DroppedFileMap | null {
-    if (!this.currentSmplFileMap) {
-      return null;
-    }
-
-    const normalizedModelPath = normalizePath(modelPath);
-    if (!normalizedModelPath) {
-      return null;
-    }
-
-    const modelFile = this.currentSmplFileMap.get(normalizedModelPath);
-    if (!modelFile) {
-      return null;
-    }
-
-    const modelOnlyFileMap: DroppedFileMap = new Map();
-    modelOnlyFileMap.set(normalizedModelPath, modelFile);
-    return modelOnlyFileMap;
-  }
-
   private setCurrentObjState(fileMap: DroppedFileMap, result: ObjModelLoadResult): void {
     this.currentObjFileMap = fileMap;
     this.currentObjModel = {
@@ -1665,12 +1735,15 @@ export class AppController {
     this.currentSmplMotion = null;
     this.currentSmplFileMap = null;
     this.currentSmplDisplayNodes = null;
+    this.availableSmplModelPaths = [];
+    this.selectedSmplModelPath = null;
     this.currentMotionKind = null;
     this.currentMotionSourcePath = null;
     this.motionWarnings = [];
     this.motionFrameSnapshot = null;
     this.isMotionPlaying = false;
     this.syncMotionControls();
+    this.renderSmplModelList();
   }
 
   private async reloadCurrentBvhWithUnit(nextUnit: BvhLinearUnit): Promise<void> {
@@ -1890,11 +1963,15 @@ export class AppController {
     const objectNameDetail = this.currentSmplMotion.objectName
       ? ` Object: ${this.currentSmplMotion.objectName}.`
       : '';
+    const motionGenderLabel = this.currentSmplMotion.motionGender ?? 'unknown';
+    const modelGenderLabel = this.currentSmplMotion.modelGender ?? 'unknown';
+    const genderDetail = ` Gender: motion=${motionGenderLabel}, model=${modelGenderLabel}.`;
     const detail =
       `${this.currentSmplMotion.jointCount} joints, ${this.currentSmplMotion.vertexCount} vertices, ` +
       `${this.currentSmplMotion.frameCount} frames @ ${this.currentSmplMotion.fps.toFixed(2)} FPS, ${status}. ` +
       `Model: ${this.currentSmplMotion.modelSourcePath}. Motion: ${this.currentSmplMotion.motionSourcePath}.` +
       objectNameDetail +
+      genderDetail +
       ' ' +
       'Drop another SMPL model (NPZ/PKL) + motion NPZ set (or motion NPZ only) to replace current playback, drop OBJ to add/replace object rendering, or drop URDF/BVH to switch mode.' +
       renderModeDetail +
@@ -1918,9 +1995,10 @@ export class AppController {
         ? ' View mode: root lock (press Tab to switch).'
         : ' View mode: free (press Tab to switch).';
     const renderModeDetail = ` Render: ${this.getSmplDisplayModeLabel()} (press Shift to toggle).`;
+    const modelGenderLabel = this.currentSmplModel.modelGender ?? 'unknown';
     const detail =
       `${this.currentSmplModel.jointCount} joints, ${this.currentSmplModel.vertexCount} vertices. ` +
-      `Model: ${this.currentSmplModel.modelSourcePath}. Drop SMPL motion NPZ to start playback, drop OBJ to place object beside the model, or drop another SMPL model NPZ/PKL to replace model.` +
+      `Model: ${this.currentSmplModel.modelSourcePath}. Gender: model=${modelGenderLabel}. Drop SMPL motion NPZ to start playback, drop OBJ to place object beside the model, or drop another SMPL model NPZ/PKL to replace model.` +
       renderModeDetail +
       viewModeDetail;
 
@@ -2164,9 +2242,12 @@ export class AppController {
         : this.currentObjModel
           ? ' + OBJ static'
           : '';
+      const genderTag = this.currentSmplMotion.motionGender
+        ? `, ${this.currentSmplMotion.motionGender}`
+        : '';
       this.motionName.textContent =
         `${this.currentSmplMotion.motionName} · ${this.currentSmplMotion.fps.toFixed(2)} FPS · ` +
-        `${this.currentSmplMotion.jointCount} joints · ${this.currentSmplMotion.vertexCount} verts (SMPL, ${this.getSmplDisplayModeLabel()}${objectState})`;
+        `${this.currentSmplMotion.jointCount} joints · ${this.currentSmplMotion.vertexCount} verts (SMPL${genderTag}, ${this.getSmplDisplayModeLabel()}${objectState})`;
       this.syncMotionFpsInput();
       this.syncBvhUnitControl();
       return;
@@ -2578,6 +2659,28 @@ export class AppController {
       button.classList.toggle('active', urdfPath === this.selectedUrdfPath);
       listItem.appendChild(button);
       this.urdfList.appendChild(listItem);
+    }
+  }
+
+  private renderSmplModelList(): void {
+    const showList = this.availableSmplModelPaths.length > 1;
+    this.smplModelListSection.hidden = !showList;
+    this.smplModelList.innerHTML = '';
+
+    if (!showList) {
+      return;
+    }
+
+    for (const smplModelPath of this.availableSmplModelPaths) {
+      const listItem = document.createElement('li');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.smplModelPath = smplModelPath;
+      button.textContent = formatSmplModelLabel(smplModelPath);
+      button.title = smplModelPath;
+      button.classList.toggle('active', smplModelPath === this.selectedSmplModelPath);
+      listItem.appendChild(button);
+      this.smplModelList.appendChild(listItem);
     }
   }
 }
