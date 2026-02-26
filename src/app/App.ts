@@ -1154,13 +1154,23 @@ export class AppController {
         preferredModelPath,
         preferredMotionPath,
       );
-      const objectLoad = await this.resolveObjForSmplScene(
-        fileMap,
-        result.objectName,
-        preferCurrentObj,
-      );
-      const objectResult = objectLoad.result;
-      const objectWarnings = objectLoad.warnings;
+      let objectResult: ObjModelLoadResult | null = null;
+      const objectWarnings: string[] = [];
+      if (result.hasObjectMotion || preferCurrentObj) {
+        const objectLoad = await this.resolveObjForSmplScene(
+          fileMap,
+          result.objectName,
+          preferCurrentObj,
+        );
+        objectResult = objectLoad.result;
+        objectWarnings.push(...objectLoad.warnings);
+      } else {
+        const hadActiveObj = Boolean(this.currentObjModel);
+        this.clearCurrentObjState();
+        if (hadActiveObj) {
+          objectWarnings.push('SMPL motion has no object track; cleared active OBJ from scene.');
+        }
+      }
       if (objectResult) {
         this.attachObjToSmplScene(
           result.sceneObject,
