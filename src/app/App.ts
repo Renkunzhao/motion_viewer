@@ -496,6 +496,7 @@ export class AppController {
   private recoverableDropHint: string | null = null;
   private presetManifest: ViewerPresetManifest | null = null;
   private capturedObjCatalog: PresetAssetFile[] = buildDefaultCapturedObjectPresetFiles();
+  private droppedCapturedObjFileMap: DroppedFileMap = new Map();
   private isPresetLoading = false;
   private isObjCatalogLoading = false;
 
@@ -1022,6 +1023,23 @@ export class AppController {
 
     const objPaths = this.objLoadService.getAvailableObjPaths(fileMap);
     if (objPaths.length > 0) {
+      const importResult = this.registerDroppedCapturedObjs(fileMap);
+      const hasSmplContext = Boolean(
+        this.currentSmplModel || this.currentSmplMotion || this.currentSmplFileMap,
+      );
+      if (hasSmplContext) {
+        const importedCount = importResult.addedCount + importResult.updatedCount;
+        if (importedCount > 0) {
+          const summary = `Imported ${importedCount} OBJ file${importedCount > 1 ? 's' : ''} into Captured OBJ catalog.`;
+          if (!this.motionWarnings.includes(summary)) {
+            this.motionWarnings.push(summary);
+          }
+        }
+        if (this.viewerState === 'ready') {
+          this.renderCurrentReadyState();
+        }
+        return;
+      }
       await this.loadObjModelFromDroppedFiles(fileMap);
       return;
     }
@@ -1448,6 +1466,7 @@ export class AppController {
     const warnings: string[] = [];
     const objPaths = this.objLoadService.getAvailableObjPaths(fileMap);
     if (objPaths.length > 0) {
+      this.registerDroppedCapturedObjs(fileMap);
       const result = await this.objLoadService.loadFromDroppedFiles(fileMap, undefined, {
         normalizeToGround: false,
       });
@@ -1470,50 +1489,63 @@ export class AppController {
     objectName: string,
   ): Promise<{ result: ObjModelLoadResult | null; warnings: string[] }> {
     const warnings: string[] = [];
-    const matched = this.findCapturedObjForObjectName(objectName);
-    if (!matched) {
-      warnings.push(`No captured OBJ preset matched motion object "${objectName}".`);
+    const candidates = this.findCapturedObjCandidatesForObjectName(objectName);
+    if (candidates.length === 0) {
+      warnings.push(`No captured OBJ matched motion object "${objectName}".`);
       return { result: null, warnings };
     }
 
-    try {
-      const fileMap = await this.fetchPresetFileMap([matched]);
-      const result = await this.objLoadService.loadFromDroppedFiles(fileMap, matched.mapAs, {
-        normalizeToGround: false,
-      });
-      this.setCurrentObjState(fileMap, result);
-      warnings.push(...result.warnings);
-      warnings.push(`Auto-loaded captured OBJ "${matched.mapAs}" for object "${objectName}".`);
-      return { result, warnings };
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      warnings.push(
-        `Failed to auto-load captured OBJ for object "${objectName}" (${matched.mapAs}): ${reason}`,
-      );
-      return { result: null, warnings };
+    for (const matched of candidates) {
+      try {
+        const resolved = await this.resolveCapturedObjSource(matched);
+        const result = await this.objLoadService.loadFromDroppedFiles(
+          resolved.fileMap,
+          resolved.preferredObjPath,
+          {
+            normalizeToGround: false,
+          },
+        );
+        this.setCurrentObjState(resolved.fileMap, result);
+        warnings.push(...result.warnings);
+        warnings.push(`Auto-loaded captured OBJ "${matched.mapAs}" for object "${objectName}".`);
+        return { result, warnings };
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        warnings.push(
+          `Failed to auto-load captured OBJ for object "${objectName}" (${matched.mapAs}): ${reason}`,
+        );
+      }
     }
+
+    return { result: null, warnings };
   }
 
-  private findCapturedObjForObjectName(objectName: string): PresetAssetFile | null {
-    let bestMatch: PresetAssetFile | null = null;
-    let bestScore = Number.POSITIVE_INFINITY;
-    for (const candidate of this.capturedObjCatalog) {
+  private findCapturedObjCandidatesForObjectName(objectName: string): PresetAssetFile[] {
+    const candidates: PresetAssetFile[] = [];
+    for (const candidate of this.getCapturedObjCatalogEntries()) {
       const candidateName = parseCapturedObjNameFromPath(candidate.mapAs);
       if (!candidateName || candidateName !== objectName) {
         continue;
       }
-
-      const candidateScore = scoreCapturedObjPath(candidate.mapAs);
-      if (
-        !bestMatch ||
-        candidateScore < bestScore ||
-        (candidateScore === bestScore && candidate.mapAs.localeCompare(bestMatch.mapAs) < 0)
-      ) {
-        bestMatch = candidate;
-        bestScore = candidateScore;
-      }
+      candidates.push(candidate);
     }
-    return bestMatch;
+
+    candidates.sort((left, right) => {
+      const leftIsLocal = this.droppedCapturedObjFileMap.has(left.mapAs);
+      const rightIsLocal = this.droppedCapturedObjFileMap.has(right.mapAs);
+      if (leftIsLocal !== rightIsLocal) {
+        return leftIsLocal ? -1 : 1;
+      }
+
+      const scoreDelta = scoreCapturedObjPath(left.mapAs) - scoreCapturedObjPath(right.mapAs);
+      if (scoreDelta !== 0) {
+        return scoreDelta;
+      }
+
+      return left.mapAs.localeCompare(right.mapAs);
+    });
+
+    return candidates;
   }
 
   private attachObjToSmplScene(
@@ -1582,12 +1614,98 @@ export class AppController {
       return;
     }
 
-    if (this.capturedObjCatalog.some((candidate) => candidate.mapAs === modelPath)) {
+    if (this.getCapturedObjCatalogEntries().some((candidate) => candidate.mapAs === modelPath)) {
       this.objSelect.value = modelPath;
       return;
     }
 
     this.objSelect.value = '';
+  }
+
+  private getCapturedObjCatalogEntries(): PresetAssetFile[] {
+    const combined = new Map<string, PresetAssetFile>();
+    for (const [rawPath] of this.droppedCapturedObjFileMap) {
+      const normalizedPath = normalizePath(rawPath);
+      if (!normalizedPath) {
+        continue;
+      }
+      combined.set(normalizedPath, {
+        path: normalizedPath,
+        mapAs: normalizedPath,
+      });
+    }
+
+    for (const presetObj of this.capturedObjCatalog) {
+      if (combined.has(presetObj.mapAs)) {
+        continue;
+      }
+      combined.set(presetObj.mapAs, presetObj);
+    }
+
+    return [...combined.values()];
+  }
+
+  private registerDroppedCapturedObjs(fileMap: DroppedFileMap): {
+    addedCount: number;
+    updatedCount: number;
+  } {
+    let addedCount = 0;
+    let updatedCount = 0;
+    const objPaths = this.objLoadService.getAvailableObjPaths(fileMap);
+    for (const objPath of objPaths) {
+      const normalizedPath = normalizePath(objPath);
+      if (!normalizedPath) {
+        continue;
+      }
+
+      const file = fileMap.get(objPath) ?? fileMap.get(normalizedPath);
+      if (!file) {
+        continue;
+      }
+
+      if (this.droppedCapturedObjFileMap.has(normalizedPath)) {
+        updatedCount += 1;
+      } else {
+        addedCount += 1;
+      }
+      this.droppedCapturedObjFileMap.set(normalizedPath, file);
+    }
+
+    if (objPaths.length > 0) {
+      this.renderObjOptions();
+      this.syncObjControls();
+    }
+
+    return {
+      addedCount,
+      updatedCount,
+    };
+  }
+
+  private async resolveCapturedObjSource(candidate: PresetAssetFile): Promise<{
+    fileMap: DroppedFileMap;
+    preferredObjPath: string;
+  }> {
+    const normalizedPath = normalizePath(candidate.mapAs);
+    if (!normalizedPath) {
+      throw new Error(`Invalid captured OBJ path: ${candidate.mapAs}`);
+    }
+
+    const localFile = this.droppedCapturedObjFileMap.get(normalizedPath);
+    if (localFile) {
+      const fileMap: DroppedFileMap = new Map();
+      fileMap.set(normalizedPath, localFile);
+      return {
+        fileMap,
+        preferredObjPath: normalizedPath,
+      };
+    }
+
+    const fileMap = await this.fetchPresetFileMap([candidate]);
+    return {
+      fileMap,
+      preferredObjPath: candidate.mapAs,
+    };
   }
 
   private bindSmplDisplayNodes(sceneObject: unknown): void {
@@ -2236,15 +2354,16 @@ export class AppController {
 
   private renderObjOptions(): void {
     const previousValue = this.objSelect.value;
-    const hasCatalog = this.capturedObjCatalog.length > 0;
+    const catalog = this.getCapturedObjCatalogEntries();
+    const hasCatalog = catalog.length > 0;
 
     this.objSelect.innerHTML = '';
     const placeholder = document.createElement('option');
     placeholder.value = '';
-    placeholder.textContent = hasCatalog ? 'Select captured OBJ...' : 'No captured OBJ presets';
+    placeholder.textContent = hasCatalog ? 'Select captured OBJ...' : 'No captured OBJ files';
     this.objSelect.appendChild(placeholder);
 
-    for (const candidate of this.capturedObjCatalog) {
+    for (const candidate of catalog) {
       const option = document.createElement('option');
       option.value = candidate.mapAs;
       option.textContent = formatCapturedObjLabel(candidate.mapAs);
@@ -2252,7 +2371,7 @@ export class AppController {
       this.objSelect.appendChild(option);
     }
 
-    if (hasCatalog && this.capturedObjCatalog.some((candidate) => candidate.mapAs === previousValue)) {
+    if (hasCatalog && catalog.some((candidate) => candidate.mapAs === previousValue)) {
       this.objSelect.value = previousValue;
       return;
     }
@@ -2272,7 +2391,7 @@ export class AppController {
   }
 
   private syncObjControls(): void {
-    const hasCatalog = this.capturedObjCatalog.length > 0;
+    const hasCatalog = this.getCapturedObjCatalogEntries().length > 0;
     this.objSelect.disabled = this.isPresetLoading || this.isObjCatalogLoading || !hasCatalog;
   }
 
@@ -2345,11 +2464,13 @@ export class AppController {
       return;
     }
 
-    const selectedObj = this.capturedObjCatalog.find((candidate) => candidate.mapAs === normalizedPath);
+    const selectedObj = this.getCapturedObjCatalogEntries().find(
+      (candidate) => candidate.mapAs === normalizedPath,
+    );
     if (!selectedObj) {
       this.showRecoverableDropError(
         'Captured OBJ Not Found',
-        `Captured OBJ "${mapPath}" is not registered in presets.`,
+        `Captured OBJ "${mapPath}" is not registered in catalog.`,
         'Select another OBJ from the list or drop an OBJ file manually.',
       );
       return;
@@ -2363,8 +2484,8 @@ export class AppController {
     this.syncObjControls();
 
     try {
-      const fileMap = await this.fetchPresetFileMap([selectedObj]);
-      await this.loadObjModelFromDroppedFiles(fileMap, selectedObj.mapAs);
+      const resolved = await this.resolveCapturedObjSource(selectedObj);
+      await this.loadObjModelFromDroppedFiles(resolved.fileMap, resolved.preferredObjPath);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       this.setState('error', {
