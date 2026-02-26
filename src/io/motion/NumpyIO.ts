@@ -81,12 +81,14 @@ function inflateDeflateRaw(data: Uint8Array): Promise<ArrayBuffer> {
     throw new Error('DecompressionStream is not available in this browser; deflated .npz is unsupported.');
   }
 
-  const stream = new globalAny.DecompressionStream('deflate-raw');
-  const writer = stream.writable.getWriter();
-  const writePromise = writer.write(data).then(() => writer.close());
-
-  const response = new Response(stream.readable);
-  return writePromise.then(() => response.arrayBuffer());
+  // Stream compressed bytes through the inflater so producer/consumer progress
+  // together and avoid backpressure deadlocks on large entries.
+  const blobInput = new Uint8Array(data.byteLength);
+  blobInput.set(data);
+  const decompressedStream = new Blob([blobInput]).stream().pipeThrough(
+    new globalAny.DecompressionStream('deflate-raw'),
+  );
+  return new Response(decompressedStream).arrayBuffer();
 }
 
 async function extractEntryData(entry: ZipEntry): Promise<ArrayBuffer> {

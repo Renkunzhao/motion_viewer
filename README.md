@@ -4,33 +4,49 @@ English | [中文](README.zh.md)
 
 `motion_viewer` is a web-based visualization tool for robot models and motion data.
 
-Its core purpose is to quickly load robot models in the browser and play motion sequences for data inspection, model validation, debugging, and demos.
-
-## What This Repository Is For
-
-- Quickly validate URDF models and asset paths (supports folder drag-and-drop and multi-file loading)
-- Inspect robot structure and pose directly in a 3D view
-- Play motion sequences frame by frame to diagnose motion quality issues
-- Serve as a visualization checkpoint in robotics algorithm and data pipelines
+Its core purpose is to quickly load robot models in the browser and play motion sequences for model validation, data inspection, debugging, and demos.
 
 ## How To Use
 
-### Run locally
+### LAFAN1
+- Download [LAFAN1](https://github.com/ubisoft/ubisoft-laforge-animation-dataset/blob/master/lafan1/lafan1.zip) or [lafan1-resolved](https://github.com/orangeduck/lafan1-resolved#Download).
+- Drag and drop `.bvh` file.
 
-1. Install dependencies:
-   - `npm install`
-2. Start dev server:
-   - `npm run dev`
-3. Open the URL printed by Vite.
+### Unitree-LAFAN1-Retargeting
+- Download [Unitree-LAFAN1-Retargeting](https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset).
+- Drag and drop `g1/h1/h1_2` folder under `robot_description` to load urdf.
+- Drag and drop any motion file (.csv) under corrospond folder. 
 
-### Load data
+### AMASS
+- Download SMPL model [SMPL-H (.npz)](https://download.is.tue.mpg.de/download.php?domain=mano&resume=1&sfile=smplh.tar.xz), [SMPL-X](https://download.is.tue.mpg.de/download.php?domain=smplx&sfile=smplx_lockedhead_20230207.zip) and [AMASS](https://amass.is.tue.mpg.de/download.php) dataset.
+- According which motion you want to play, drag and drop corrospond model folder first, then drag and drop the motion file (.npz).
+  - eg. To visualize `AMASS/ACCAD/SMPL-X G/Female1General_c3d/A1_-_Stand_stageii.npz`, choose `SMPL-X`.
 
-- Use `Preset Motion` in the top-left `Datasets` panel and click `Load Preset` for built-in demos.
-- Or drag and drop local files/folders:
-  - URDF workflow: drop folder that inlucde `.urdf` and mesh resources, then drop motion `.csv`
-  - BVH workflow: drop `.bvh`
-  - SMPL workflow: drop model `.npz` / `basicmodel_*.pkl`, then drop motion `.npz` (`poses/trans`)
-- You can also use `Select Folder` / `Select Files` instead of drag-and-drop.
+### OMOMO
+- Download [SMPL-X](https://smpl-x.is.tue.mpg.de/download.php) model.
+- OMOMO dataset includes all motions in one .p file so it's to big to load using browser. 
+- You can download original dataset [OMOMO](https://drive.google.com/file/d/1tZVqLB7II0whI-Qjz-z-AU3ponSEyAmm/view?usp=sharing) (~21G) and use [scripts](tools/convert_omomo_seq_to_motion_npz.py) to transfer and split it.
+```bash
+pip install joblib
+python3 tools/convert_omomo_seq_to_motion_npz.py \
+  --data-root <path-to-omomo-dir> \
+  --output-dir-name <path-to-output-dir> \
+  --overwrite
+```
+- Or you can download the preprocessed dataset [omomo-resolved](https://huggingface.co/datasets/Kunzhao/omomo-resolved).
+- Drag and drop `SMPL-X` model folder.
+- Drag and drop `captured_objects` object model folder.
+- Drag and drop motion file (.npz).
+
+### Preset
+- `dance1_subject1.bvh` bvh from [LAFAN1](https://github.com/ubisoft/ubisoft-laforge-animation-dataset/blob/master/lafan1/lafan1.zip).
+- `g1`,`h1`,`h1_2` urdf and corrospnd `dance1_subject1.csv` from [Unitree-LAFAN1-Retargeting](https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset).
+- `SMPL-X Female` model from [SMPL-X](https://download.is.tue.mpg.de/download.php?domain=smplx&sfile=smplx_lockedhead_20230207.zip).
+- `SMPL-X G/Male2MartialArtsExtended_c3d/Extended_3_stageii.npz` from [ACCAD](https://amass.is.tue.mpg.de/download.php).
+- `largetable_cleaned_simplified.obj` from [OMOMO](https://drive.google.com/file/d/1tZVqLB7II0whI-Qjz-z-AU3ponSEyAmm/view?usp=sharing).
+- `sub1_largetable_013.npz` from [omomo-resolved](https://huggingface.co/datasets/Kunzhao/omomo-resolved).
+
+*These motions are provided for website feature demonstration only. No model or motion downloads are offered. Please obtain assets from the original source and follow its license terms. For infringement concerns, contact rkzdtc@gmail.com.*
 
 ### Playback controls
 
@@ -43,24 +59,25 @@ Its core purpose is to quickly load robot models in the browser and play motion 
   - `FPS` input for CSV playback speed
   - `BVH Unit` dropdown (`m`, `dm`, `cm`, `inch`, `feet`)
 
-## Motion Support
-- [LAFAN1 (.bvh)](https://github.com/ubisoft/ubisoft-laforge-animation-dataset.git)
-- [lafan1-resolved (.bvh)](https://github.com/orangeduck/lafan1-resolved.git)
-- [unitree-LAFAN1-Retarget (.csv)](https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset/tree/main)
-- [AMASS (.npz)](https://amass.is.tue.mpg.de/download.php)
+## Run locally
 
-## Model Support
-- Skeleton:
-  - `Skeleton` (for LAFAN1 / lafan1-resolved rows)
-- Unitree (same source link):
-  - [G1, H1, H1-2 (.urdf)](https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset/tree/main)
-- SMPL family:
-  - [SMPL (.pkl)](https://smpl.is.tue.mpg.de/download.php)
-  - [SMPL-H (.npz)](https://mano.is.tue.mpg.de/download.php)
-  - [SMPL-X (.npz/.pkl)](https://smpl-x.is.tue.mpg.de/download.php)
+1. Install [npm](https://nodejs.org/en/download/).
+2. Install dependencies, build and start dev server:
+```bash
+npm install
+npm run build
+npm run dev
+```
+3. Open the URL printed by Vite.
+
 
 ## References
-
-- [Robot Viewer](https://viewer.robotsfan.com/)
-- [BVHView](https://theorangeduck.com/media/uploads/BVHView/bvhview.html)
+- [robot_viewer](https://github.com/fan-ziqi/robot_viewer.git)
+- [urdf-loaders](https://github.com/gkjohnson/urdf-loaders.git)
+- [BVHView](https://github.com/orangeduck/BVHView.git)
+- [amass](https://github.com/nghorbani/amass)
+- [body_visualizer](https://github.com/nghorbani/body_visualizer.git)
+- [human_body_prior](https://github.com/nghorbani/human_body_prior.git)
+- [omomo_release](https://github.com/lijiaman/omomo_release.git)
+- [GMR](https://github.com/YanjieZe/GMR.git)
 - This project was completed using Codex vibe coding.

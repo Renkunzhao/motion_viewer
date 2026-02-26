@@ -220,7 +220,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-dir-name",
-        default="single_motion_npz",
+        default="motions",
         help="Output subdirectory name under data root",
     )
     parser.add_argument(

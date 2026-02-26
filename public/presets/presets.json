@@ -1,36 +1,27 @@
 {
   "capturedObjects": [
-    "presets/models/captured_objects/clothesstand_cleaned_simplified.obj",
-    "presets/models/captured_objects/floorlamp_cleaned_simplified.obj",
-    "presets/models/captured_objects/largebox_cleaned_simplified.obj",
-    "presets/models/captured_objects/largetable_cleaned_simplified.obj",
-    "presets/models/captured_objects/monitor_cleaned_simplified.obj",
-    "presets/models/captured_objects/mop_cleaned_simplified.obj",
-    "presets/models/captured_objects/mop_cleaned_simplified_top.obj",
-    "presets/models/captured_objects/mop_cleaned_simplified_bottom.obj",
-    "presets/models/captured_objects/plasticbox_cleaned_simplified.obj",
-    "presets/models/captured_objects/smallbox_cleaned_simplified.obj",
-    "presets/models/captured_objects/smalltable_cleaned_simplified.obj",
-    "presets/models/captured_objects/suitcase_cleaned_simplified.obj",
-    "presets/models/captured_objects/trashcan_cleaned_simplified.obj",
-    "presets/models/captured_objects/tripod_cleaned_simplified.obj",
-    "presets/models/captured_objects/vacuum_cleaned_simplified.obj",
-    "presets/models/captured_objects/vacuum_cleaned_simplified_top.obj",
-    "presets/models/captured_objects/vacuum_cleaned_simplified_bottom.obj",
-    "presets/models/captured_objects/whitechair_cleaned_simplified.obj",
-    "presets/models/captured_objects/woodchair_cleaned_simplified.obj"
+    "presets/omomo/captured_objects/largetable_cleaned_simplified.obj"
   ],
   "presets": [
+    {
+      "id": "lafan1-bvh-dance1",
+      "label": "LAFAN1 BVH dance1_subject1",
+      "description": "Pure BVH preview mode without URDF.",
+      "motion": {
+        "kind": "bvh",
+        "path": "presets/LAFAN1/bvh/dance1_subject1.bvh"
+      }
+    },
     {
       "id": "g1-csv-dance1",
       "label": "Unitree G1 + CSV dance1_subject1",
       "description": "G1 URDF with LAFAN1 retargeted CSV motion.",
       "model": {
-        "urdfPath": "presets/models/g1/g1_29dof_rev_1_0.urdf"
+        "urdfPath": "presets/LAFAN1_Retargeting_Dataset/robot_description/g1/g1_29dof_rev_1_0.urdf"
       },
       "motion": {
         "kind": "csv",
-        "path": "presets/motions/LAFAN1_Retargeting/g1/dance1_subject1.csv"
+        "path": "presets/LAFAN1_Retargeting_Dataset/g1/dance1_subject1.csv"
       }
     },
     {
@@ -38,11 +29,11 @@
       "label": "Unitree H1 + CSV dance1_subject1",
       "description": "H1 URDF with LAFAN1 retargeted CSV motion.",
       "model": {
-        "urdfPath": "presets/models/h1/h1.urdf"
+        "urdfPath": "presets/LAFAN1_Retargeting_Dataset/robot_description/h1/h1.urdf"
       },
       "motion": {
         "kind": "csv",
-        "path": "presets/motions/LAFAN1_Retargeting/h1/dance1_subject1.csv"
+        "path": "presets/LAFAN1_Retargeting_Dataset/h1/dance1_subject1.csv"
       }
     },
     {
@@ -50,31 +41,22 @@
       "label": "Unitree H1-2 + CSV dance1_subject1",
       "description": "H1-2 URDF with LAFAN1 retargeted CSV motion.",
       "model": {
-        "urdfPath": "presets/models/h1_2/h1_2_wo_hand.urdf"
+        "urdfPath": "presets/LAFAN1_Retargeting_Dataset/robot_description/h1_2/h1_2_wo_hand.urdf"
       },
       "motion": {
         "kind": "csv",
-        "path": "presets/motions/LAFAN1_Retargeting/h1_2/dance1_subject1.csv"
+        "path": "presets/LAFAN1_Retargeting_Dataset/h1_2/dance1_subject1.csv"
       }
     },
     {
-      "id": "lafan1-bvh-dance1",
-      "label": "LAFAN1 BVH dance1_subject1",
-      "description": "Pure BVH preview mode without URDF.",
-      "motion": {
-        "kind": "bvh",
-        "path": "presets/motions/LAFAN1/bvh/dance1_subject1.bvh"
-      }
-    },
-    {
-      "id": "smplh-amass-extended3",
-      "label": "SMPL-H G + Male2MartialArtsExtended_c3d 3_poses",
-      "description": "SMPL-H model with AMASS Extended 3 motion preview.",
+      "id": "smplx-amass-extended3",
+      "label": "SMPL-X Male + ACCAD Male2MartialArtsExtended_c3d",
+      "description": "SMPL-X male model with AMASS Extended_3_stageii motion preview.",
       "model": {
         "files": [
           {
-            "path": "presets/SMPL+H G/Male2MartialArtsExtended_c3d/model.npz",
-            "mapAs": "presets/smplh/model.npz"
+            "path": "presets/SMPL-X/SMPLX_MALE.npz",
+            "mapAs": "presets/smplx/SMPLX_MALE.npz"
           }
         ]
       },
@@ -82,8 +64,30 @@
         "kind": "smpl",
         "files": [
           {
-            "path": "presets/SMPL+H G/Male2MartialArtsExtended_c3d/Extended 3_poses.npz",
-            "mapAs": "presets/smplh/Extended_3_poses.npz"
+            "path": "presets/AMASS/ACCAD/SMPL-X G/Male2MartialArtsExtended_c3d/Extended_3_stageii.npz",
+            "mapAs": "presets/amass/Extended_3_stageii.npz"
+          }
+        ]
+      }
+    },
+    {
+      "id": "smplx-omomo-sub2-largetable-003",
+      "label": "SMPL-X Male + OMOMO sub2_largetable_003",
+      "description": "SMPL-X model with OMOMO resolved motion preview.",
+      "model": {
+        "files": [
+          {
+            "path": "presets/SMPL-X/SMPLX_MALE.npz",
+            "mapAs": "presets/smplx/SMPLX_MALE.npz"
+          }
+        ]
+      },
+      "motion": {
+        "kind": "smpl",
+        "files": [
+          {
+            "path": "presets/omomo/motions/sub2_largetable_003.npz",
+            "mapAs": "presets/omomo/motions/sub2_largetable_003.npz"
           }
         ]
       }

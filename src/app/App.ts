@@ -286,7 +286,7 @@ const DEFAULT_CAPTURED_OBJECT_FILE_NAMES = [
 
 function buildDefaultCapturedObjectPresetFiles(): PresetAssetFile[] {
   return DEFAULT_CAPTURED_OBJECT_FILE_NAMES.map((fileName) => {
-    const path = `presets/models/captured_objects/${fileName}`;
+    const path = `presets/omomo/captured_objects/${fileName}`;
     return {
       path,
       mapAs: normalizePresetMapPath(path),
