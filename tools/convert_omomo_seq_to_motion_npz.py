@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 """Convert OMOMO sequence .p files into per-sequence SMPL motion .npz files.
 
-Output files are compatible with this web viewer's SMPL motion path:
+Output files are compatible with this web viewer's SMPL motion path and
+preserve OMOMO sequence fields consumed by the original pipeline.
+
+Viewer keys:
 - required: poses.npy, trans.npy
 - optional: betas.npy, mocap_frame_rate.npy
 - omomo extras: obj_trans.npy, obj_rot_mat.npy, obj_scale.npy, trans2joint.npy
+
+Preserved sequence keys (from *_seq_joints24.p):
+- root_orient.npy, pose_body.npy, rest_offsets.npy, obj_com_pos.npy
+- obj_rot.npy (same content as obj_rot_mat.npy for compatibility)
+- obj_bottom_rot.npy (same content as obj_bottom_rot_mat.npy when present)
 """
 
 from __future__ import annotations
@@ -83,6 +91,13 @@ def safe_seq_name(raw: object, fallback_index: int) -> str:
     return "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in name)
 
 
+def require_entry_fields(entry: Dict[str, object], seq_name: str, field_names: Iterable[str]) -> None:
+    missing = [field_name for field_name in field_names if field_name not in entry]
+    if missing:
+        missing_text = ", ".join(missing)
+        raise ValueError(f"{seq_name} is missing required OMOMO fields: {missing_text}")
+
+
 def convert_split(
     src_path: Path,
     dst_dir: Path,
@@ -103,6 +118,19 @@ def convert_split(
         if out_path.exists() and not overwrite:
             skipped += 1
             continue
+
+        require_entry_fields(
+            entry,
+            seq_name,
+            (
+                "pose_body",
+                "root_orient",
+                "trans",
+                "obj_trans",
+                "obj_rot",
+                "obj_scale",
+            ),
+        )
 
         pose_body = to_float_array(entry["pose_body"], (63,), f"{seq_name}.pose_body")
         root_orient = to_float_array(entry["root_orient"], (3,), f"{seq_name}.root_orient")
@@ -126,6 +154,19 @@ def convert_split(
         obj_trans = normalize_obj_trans(entry["obj_trans"])[:frame_count]
         obj_rot_mat = to_float_array(entry["obj_rot"], (3, 3), f"{seq_name}.obj_rot")[:frame_count]
         obj_scale = normalize_obj_scale(entry["obj_scale"])[:frame_count]
+        obj_com_pos = (
+            to_float_array(entry["obj_com_pos"], (3,), f"{seq_name}.obj_com_pos")[:frame_count]
+            if "obj_com_pos" in entry
+            else np.zeros((frame_count, 3), dtype=np.float32)
+        )
+        rest_offsets = (
+            np.asarray(entry["rest_offsets"], dtype=np.float32)
+            if "rest_offsets" in entry
+            else np.zeros((24, 3), dtype=np.float32)
+        )
+        if rest_offsets.ndim != 2 or rest_offsets.shape[1] != 3:
+            raise ValueError(f"{seq_name}.rest_offsets shape mismatch: expected [J,3], got {rest_offsets.shape}")
+
         trans2joint = normalize_trans2joint(
             entry.get("trans2joint", np.asarray([0.0, 0.0, 0.0], dtype=np.float32))
         )
@@ -138,7 +179,12 @@ def convert_split(
             "seq_name": np.asarray(seq_name),
             "gender": np.asarray(extract_gender(entry.get("gender", "unknown"))),
             "obj_name": np.asarray(obj_name),
+            "root_orient": root_orient[:frame_count].astype(np.float32),
+            "pose_body": pose_body[:frame_count].astype(np.float32),
+            "rest_offsets": rest_offsets.astype(np.float32),
             "obj_trans": obj_trans.astype(np.float32),
+            "obj_com_pos": obj_com_pos.astype(np.float32),
+            "obj_rot": obj_rot_mat.astype(np.float32),
             "obj_rot_mat": obj_rot_mat.astype(np.float32),
             "obj_scale": obj_scale.astype(np.float32),
             "trans2joint": trans2joint.astype(np.float32),
@@ -149,9 +195,11 @@ def convert_split(
             payload["obj_bottom_trans"] = normalize_obj_trans(entry["obj_bottom_trans"])[:frame_count].astype(
                 np.float32
             )
-            payload["obj_bottom_rot_mat"] = to_float_array(
+            obj_bottom_rot_mat = to_float_array(
                 entry["obj_bottom_rot"], (3, 3), f"{seq_name}.obj_bottom_rot"
             )[:frame_count].astype(np.float32)
+            payload["obj_bottom_rot"] = obj_bottom_rot_mat
+            payload["obj_bottom_rot_mat"] = obj_bottom_rot_mat
             payload["obj_bottom_scale"] = normalize_obj_scale(entry["obj_bottom_scale"])[:frame_count].astype(
                 np.float32
             )

@@ -28,7 +28,14 @@ const REQUIRED_MODEL_ENTRIES = [
 
 const REQUIRED_MOTION_ENTRIES = ['poses.npy', 'trans.npy'] as const;
 const SKELETON_HIGHLIGHT_COLOR = '#7ef9ff';
-const OMOMO_TRANS_TO_JOINT_FALLBACK: [number, number, number] = [-0.0011, 0.3795, -0.0194];
+const OMOMO_TRANS_TO_JOINT_FALLBACK_ALL: [number, number, number] = [-0.0011, 0.3795, -0.0194];
+const OMOMO_TRANS_TO_JOINT_FALLBACK_BY_GENDER: Record<
+  Exclude<SmplGender, 'neutral'>,
+  [number, number, number]
+> = {
+  male: [-0.00137408, 0.39028805, -0.01708837],
+  female: [-0.00059544, 0.3626442, -0.02312135],
+};
 const OMOMO_SEQUENCE_NAME_PATTERN = /^sub\d+_[a-z0-9]+_\d+$/i;
 
 type SmplGender = 'male' | 'female' | 'neutral';
@@ -209,6 +216,20 @@ function inferModelGenderFromPath(path: string): SmplGender | null {
   }
   if (/(^|[^a-z])neutral([^a-z]|$)/.test(normalized)) {
     return 'neutral';
+  }
+  return null;
+}
+
+function inferModelFamilyFromPath(path: string): 'smplx' | 'smplh' | 'smpl' | null {
+  const normalized = normalizePath(path).toLowerCase();
+  if (normalized.includes('/smplx/')) {
+    return 'smplx';
+  }
+  if (normalized.includes('/smplh/')) {
+    return 'smplh';
+  }
+  if (normalized.includes('/smpl/')) {
+    return 'smpl';
   }
   return null;
 }
@@ -726,6 +747,7 @@ export class SmplMotionService {
     const model = await this.loadModelFromFile(modelFile, selectedModelPath, motionBetas, warnings);
     const rig = this.buildRig(model, modelName);
     const modelGender = inferModelGenderFromPath(selectedModelPath);
+    const modelFamily = inferModelFamilyFromPath(selectedModelPath);
     const hasStrictGenderMismatch =
       Boolean(motionGender) &&
       Boolean(modelGender) &&
@@ -741,6 +763,15 @@ export class SmplMotionService {
       const motionGenderLabel = motionGender ?? 'unknown';
       warnings.add(
         `Current model gender: unknown (motion: ${motionGenderLabel}). If motion looks incorrect, verify model and motion gender match.`,
+      );
+    }
+    if (
+      this.isLikelyOmomoSequence(sequenceName, selectedMotionPath) &&
+      modelFamily &&
+      modelFamily !== 'smplx'
+    ) {
+      warnings.add(
+        `OMOMO reference videos use SMPL-X. Current model appears to be ${modelFamily.toUpperCase()}, so body shape/pose details may differ.`,
       );
     }
 
@@ -932,9 +963,10 @@ export class SmplMotionService {
     ];
     let transToJointOffset = await this.resolveMotionTransToJointOffset(motionArchive, warnings);
     if (!transToJointOffset && objectMotion && this.isLikelyOmomoSequence(sequenceName, selectedMotionPath)) {
-      transToJointOffset = [...OMOMO_TRANS_TO_JOINT_FALLBACK];
+      transToJointOffset = this.getOmomoFallbackTransToJointOffset(motionGender);
+      const fallbackLabel = motionGender && motionGender !== 'neutral' ? motionGender : 'global';
       warnings.add(
-        'SMPL trans2joint.npy missing; applied OMOMO fallback trans2joint for object alignment.',
+        `SMPL trans2joint.npy missing; applied OMOMO ${fallbackLabel} fallback trans2joint for object alignment.`,
       );
     }
     const objectAlignmentOffset: [number, number, number] | null =
@@ -1131,6 +1163,18 @@ export class SmplMotionService {
       warnings.add(`SMPL trans2joint.npy could not be parsed (${reason}).`);
       return null;
     }
+  }
+
+  private getOmomoFallbackTransToJointOffset(
+    motionGender: SmplGender | null,
+  ): [number, number, number] {
+    if (motionGender === 'male') {
+      return [...OMOMO_TRANS_TO_JOINT_FALLBACK_BY_GENDER.male];
+    }
+    if (motionGender === 'female') {
+      return [...OMOMO_TRANS_TO_JOINT_FALLBACK_BY_GENDER.female];
+    }
+    return [...OMOMO_TRANS_TO_JOINT_FALLBACK_ALL];
   }
 
   private async loadModelFromFile(

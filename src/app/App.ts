@@ -1830,20 +1830,25 @@ export class AppController {
 
   private renderReadyState(result: LoadedRobotResult): void {
     const motionDetail = this.currentMotionClip
-      ? ` Motion: ${this.currentMotionClip.name} (${this.currentMotionClip.frameCount} frames @ ${this.currentMotionClip.fps} FPS, ${this.isMotionPlaying ? 'playing' : 'paused'}). Drop CSV to replace motion.`
-      : ' Drop CSV to load motion, drop BVH to switch into BVH preview mode, drop SMPL model (NPZ/PKL) + motion NPZ to switch into SMPL mode, or drop OBJ to preview an object model.';
-
-    const sourceDetail = this.currentMotionSourcePath
-      ? ` Motion source: ${this.currentMotionSourcePath}.`
-      : '';
+      ? `Motion: ${this.currentMotionClip.name} (${this.currentMotionClip.frameCount} frames @ ${this.currentMotionClip.fps} FPS, ${this.isMotionPlaying ? 'playing' : 'paused'}). Drop CSV to replace motion.`
+      : 'Drop CSV to load motion, drop BVH to switch into BVH preview mode, drop SMPL model (NPZ/PKL) + motion NPZ to switch into SMPL mode, or drop OBJ to preview an object model.';
     const viewModeDetail =
       this.viewMode === 'root_lock'
-        ? ' View mode: root lock (press Tab to switch).'
-        : ' View mode: free (press Tab to switch).';
+        ? 'View mode: root lock (press Tab to switch).'
+        : 'View mode: free (press Tab to switch).';
+    const detailLines = [
+      `${result.jointCount} joints, ${result.linkCount} links, source: ${result.selectedUrdfPath}.`,
+      'Drop URDF to replace robot.',
+      motionDetail,
+    ];
+    if (this.currentMotionSourcePath) {
+      detailLines.push(`Motion source: ${this.currentMotionSourcePath}.`);
+    }
+    detailLines.push(viewModeDetail);
 
     this.setState('ready', {
       title: `Loaded ${result.robotName || 'URDF Robot'}`,
-      detail: `${result.jointCount} joints, ${result.linkCount} links, source: ${result.selectedUrdfPath}. Drop URDF to replace robot.${motionDetail}${sourceDetail}${viewModeDetail}`,
+      detail: detailLines.join('\n'),
       dropHint: this.buildReadyDropHint(),
       warnings: this.collectReadyWarnings(result.warnings),
     });
@@ -1856,15 +1861,16 @@ export class AppController {
 
     const viewModeDetail =
       this.viewMode === 'root_lock'
-        ? ' View mode: root lock (press Tab to switch).'
-        : ' View mode: free (press Tab to switch).';
+        ? 'View mode: root lock (press Tab to switch).'
+        : 'View mode: free (press Tab to switch).';
     const status = this.isMotionPlaying ? 'playing' : 'paused';
-    const detail =
-      `${this.currentBvhMotion.jointCount} animated joints, ` +
-      `${this.currentBvhMotion.frameCount} frames @ ${this.currentBvhMotion.fps.toFixed(2)} FPS, ` +
-      `${status}. Unit: ${this.currentBvhMotion.linearUnit}. Source: ${this.currentBvhMotion.sourcePath}. ` +
-      'Drop another BVH to replace motion, drop URDF to return to robot mode, drop SMPL model (NPZ/PKL) + motion NPZ to switch mode, or drop OBJ to preview an object model.' +
-      viewModeDetail;
+    const detail = [
+      `${this.currentBvhMotion.jointCount} animated joints, ${this.currentBvhMotion.frameCount} frames @ ${this.currentBvhMotion.fps.toFixed(2)} FPS, ${status}.`,
+      `Unit: ${this.currentBvhMotion.linearUnit}.`,
+      `Source: ${this.currentBvhMotion.sourcePath}.`,
+      'Drop another BVH to replace motion, drop URDF to return to robot mode, drop SMPL model (NPZ/PKL) + motion NPZ to switch mode, or drop OBJ to preview an object model.',
+      viewModeDetail,
+    ].join('\n');
 
     this.setState('ready', {
       title: `Loaded ${this.currentBvhMotion.name}`,
@@ -1881,26 +1887,28 @@ export class AppController {
 
     const viewModeDetail =
       this.viewMode === 'root_lock'
-        ? ' View mode: root lock (press Tab to switch).'
-        : ' View mode: free (press Tab to switch).';
-    const renderModeDetail = ` Render: ${this.getSmplDisplayModeLabel()} (press Shift to toggle).`;
+        ? 'View mode: root lock (press Tab to switch).'
+        : 'View mode: free (press Tab to switch).';
+    const renderModeDetail = `Render: ${this.getSmplDisplayModeLabel()} (press Shift to toggle).`;
     const status = this.isMotionPlaying ? 'playing' : 'paused';
     const objectNameDetail = this.currentSmplMotion.objectName
-      ? ` Object: ${this.currentSmplMotion.objectName}.`
+      ? `Object: ${this.currentSmplMotion.objectName}.`
       : '';
     const motionGenderLabel = this.currentSmplMotion.motionGender ?? 'unknown';
     const modelGenderLabel = this.currentSmplMotion.modelGender ?? 'unknown';
-    const genderDetail = ` Gender: motion=${motionGenderLabel}, model=${modelGenderLabel}.`;
-    const detail =
-      `${this.currentSmplMotion.jointCount} joints, ${this.currentSmplMotion.vertexCount} vertices, ` +
-      `${this.currentSmplMotion.frameCount} frames @ ${this.currentSmplMotion.fps.toFixed(2)} FPS, ${status}. ` +
-      `Model: ${this.currentSmplMotion.modelSourcePath}. Motion: ${this.currentSmplMotion.motionSourcePath}.` +
-      objectNameDetail +
-      genderDetail +
-      ' ' +
-      'Object model is auto-matched from motion when available. Drop another SMPL model (NPZ/PKL) + motion NPZ set (or motion NPZ only) to replace current playback, or drop URDF/BVH/OBJ to switch mode.' +
-      renderModeDetail +
-      viewModeDetail;
+    const detailLines = [
+      `${this.currentSmplMotion.jointCount} joints, ${this.currentSmplMotion.vertexCount} vertices, ${this.currentSmplMotion.frameCount} frames @ ${this.currentSmplMotion.fps.toFixed(2)} FPS, ${status}.`,
+      `Model: ${this.currentSmplMotion.modelSourcePath}.`,
+      `Motion: ${this.currentSmplMotion.motionSourcePath}.`,
+      `Gender: motion=${motionGenderLabel}, model=${modelGenderLabel}.`,
+      'Object model is auto-matched from motion when available. Drop another SMPL model (NPZ/PKL) + motion NPZ set (or motion NPZ only) to replace current playback, or drop URDF/BVH/OBJ to switch mode.',
+      renderModeDetail,
+      viewModeDetail,
+    ];
+    if (objectNameDetail) {
+      detailLines.splice(3, 0, objectNameDetail);
+    }
+    const detail = detailLines.join('\n');
 
     this.setState('ready', {
       title: `Loaded ${this.currentSmplMotion.motionName}`,
@@ -1917,15 +1925,18 @@ export class AppController {
 
     const viewModeDetail =
       this.viewMode === 'root_lock'
-        ? ' View mode: root lock (press Tab to switch).'
-        : ' View mode: free (press Tab to switch).';
-    const renderModeDetail = ` Render: ${this.getSmplDisplayModeLabel()} (press Shift to toggle).`;
+        ? 'View mode: root lock (press Tab to switch).'
+        : 'View mode: free (press Tab to switch).';
+    const renderModeDetail = `Render: ${this.getSmplDisplayModeLabel()} (press Shift to toggle).`;
     const modelGenderLabel = this.currentSmplModel.modelGender ?? 'unknown';
-    const detail =
-      `${this.currentSmplModel.jointCount} joints, ${this.currentSmplModel.vertexCount} vertices. ` +
-      `Model: ${this.currentSmplModel.modelSourcePath}. Gender: model=${modelGenderLabel}. Drop SMPL motion NPZ to start playback, drop another SMPL model NPZ/PKL to replace model, or drop URDF/BVH/OBJ to switch mode.` +
-      renderModeDetail +
-      viewModeDetail;
+    const detail = [
+      `${this.currentSmplModel.jointCount} joints, ${this.currentSmplModel.vertexCount} vertices.`,
+      `Model: ${this.currentSmplModel.modelSourcePath}.`,
+      `Gender: model=${modelGenderLabel}.`,
+      'Drop SMPL motion NPZ to start playback, drop another SMPL model NPZ/PKL to replace model, or drop URDF/BVH/OBJ to switch mode.',
+      renderModeDetail,
+      viewModeDetail,
+    ].join('\n');
 
     this.setState('ready', {
       title: `Loaded ${this.currentSmplModel.modelName}`,
@@ -1942,12 +1953,14 @@ export class AppController {
 
     const viewModeDetail =
       this.viewMode === 'root_lock'
-        ? ' View mode: root lock (press Tab to switch).'
-        : ' View mode: free (press Tab to switch).';
-    const detail =
-      `${this.currentObjModel.meshCount} meshes. Model: ${this.currentObjModel.modelSourcePath}. ` +
-      'Drop another OBJ to replace object, or drop URDF/BVH/SMPL to switch mode.' +
-      viewModeDetail;
+        ? 'View mode: root lock (press Tab to switch).'
+        : 'View mode: free (press Tab to switch).';
+    const detail = [
+      `${this.currentObjModel.meshCount} meshes.`,
+      `Model: ${this.currentObjModel.modelSourcePath}.`,
+      'Drop another OBJ to replace object, or drop URDF/BVH/SMPL to switch mode.',
+      viewModeDetail,
+    ].join('\n');
 
     this.setState('ready', {
       title: `Loaded ${this.currentObjModel.modelName}`,
