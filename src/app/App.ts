@@ -1217,7 +1217,6 @@ export class AppController {
     fileMap: DroppedFileMap,
     preferredModelPath?: string,
     preferredMotionPath?: string,
-    preferCurrentObj = false,
   ): Promise<void> {
     this.setState('loading', {
       detail: 'Loading SMPL model and motion ...',
@@ -1229,18 +1228,22 @@ export class AppController {
         preferredModelPath,
         preferredMotionPath,
       );
+      const hadActiveObj = Boolean(this.currentObjModel);
       let objectResult: ObjModelLoadResult | null = null;
       const objectWarnings: string[] = [];
-      if (result.hasObjectMotion || preferCurrentObj) {
-        const objectLoad = await this.resolveObjForSmplScene(
-          fileMap,
-          result.objectName,
-          preferCurrentObj,
-        );
+      if (result.hasObjectMotion) {
+        const objectLoad = await this.resolveObjForSmplScene(fileMap, result.objectName);
         objectResult = objectLoad.result;
         objectWarnings.push(...objectLoad.warnings);
+        if (!objectResult) {
+          this.clearCurrentObjState();
+          if (hadActiveObj) {
+            objectWarnings.push(
+              'SMPL motion object did not resolve to an OBJ model; cleared active OBJ from scene.',
+            );
+          }
+        }
       } else {
-        const hadActiveObj = Boolean(this.currentObjModel);
         this.clearCurrentObjState();
         if (hadActiveObj) {
           objectWarnings.push('SMPL motion has no object track; cleared active OBJ from scene.');
@@ -1338,12 +1341,8 @@ export class AppController {
         fileMap,
         preferredModelPath,
       );
-      const objectLoad = await this.resolveObjForSmplScene(fileMap);
-      const objectResult = objectLoad.result;
-      const objectWarnings = objectLoad.warnings;
-      if (objectResult) {
-        this.attachObjToSmplScene(result.sceneObject, result.playbackTarget, objectResult, false);
-      }
+      const hadActiveObj = Boolean(this.currentObjModel);
+      this.clearCurrentObjState();
 
       this.lastLoadResult = null;
       this.sceneWarning = null;
@@ -1378,7 +1377,9 @@ export class AppController {
       this.renderSmplModelList();
       this.currentMotionKind = null;
       this.currentMotionSourcePath = null;
-      this.motionWarnings = [...result.warnings, ...objectWarnings];
+      this.motionWarnings = hadActiveObj
+        ? [...result.warnings, 'Loaded SMPL model; cleared active OBJ from scene.']
+        : [...result.warnings];
       this.motionFrameSnapshot = null;
       this.isMotionPlaying = false;
 
@@ -1405,26 +1406,9 @@ export class AppController {
     });
 
     try {
+      const hadActiveSmpl = Boolean(this.currentSmplModel || this.currentSmplMotion);
       const result = await this.objLoadService.loadFromDroppedFiles(fileMap, preferredObjPath);
       this.setCurrentObjState(fileMap, result);
-
-      if (this.currentSmplMotion && this.currentSmplModel && this.currentSmplFileMap) {
-        await this.loadSmplMotionFromDroppedFiles(
-          this.currentSmplFileMap,
-          this.currentSmplModel.modelSourcePath,
-          this.currentSmplMotion.motionSourcePath,
-          true,
-        );
-        return;
-      }
-
-      if (this.currentSmplModel && this.currentSmplFileMap) {
-        await this.loadSmplModelFromDroppedFiles(
-          this.currentSmplFileMap,
-          this.currentSmplModel.modelSourcePath,
-        );
-        return;
-      }
 
       this.lastLoadResult = null;
       this.sceneWarning = null;
@@ -1444,7 +1428,9 @@ export class AppController {
       this.sceneController.syncGroundToCurrentRobot();
       this.syncMotionControls();
       this.recoverableDropHint = null;
-      this.motionWarnings = [...result.warnings];
+      this.motionWarnings = hadActiveSmpl
+        ? [...result.warnings, 'Loaded OBJ model; cleared active SMPL scene.']
+        : [...result.warnings];
       this.renderObjReadyState();
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -1458,7 +1444,6 @@ export class AppController {
   private async resolveObjForSmplScene(
     fileMap: DroppedFileMap,
     motionObjectName?: string | null,
-    preferCurrentObj = false,
   ): Promise<{ result: ObjModelLoadResult | null; warnings: string[] }> {
     const warnings: string[] = [];
     const objPaths = this.objLoadService.getAvailableObjPaths(fileMap);
@@ -1472,68 +1457,13 @@ export class AppController {
     }
 
     const desiredObjectName = normalizeObjectToken(motionObjectName ?? '');
-    if (desiredObjectName) {
-      const hasCurrentObj = Boolean(this.currentObjFileMap && this.currentObjModel);
-      const currentObjMatchesDesired = Boolean(
-        this.currentObjModel &&
-          this.doesObjPathMatchObjectName(this.currentObjModel.modelSourcePath, desiredObjectName),
-      );
-
-      if (hasCurrentObj && currentObjMatchesDesired && this.currentObjFileMap && this.currentObjModel) {
-        try {
-          const result = await this.objLoadService.loadFromDroppedFiles(
-            this.currentObjFileMap,
-            this.currentObjModel.modelSourcePath,
-            {
-              normalizeToGround: false,
-            },
-          );
-          warnings.push(...result.warnings);
-          return { result, warnings };
-        } catch (error) {
-          const reason = error instanceof Error ? error.message : String(error);
-          warnings.push(
-            `Failed to reload current OBJ model (${this.currentObjModel.modelSourcePath}): ${reason}`,
-          );
-          this.clearCurrentObjState();
-        }
-      }
-
-      const autoLoad = await this.loadCapturedObjForMotionObjectName(desiredObjectName);
-      warnings.push(...autoLoad.warnings);
-      if (autoLoad.result) {
-        return { result: autoLoad.result, warnings };
-      }
-
-      if (preferCurrentObj && hasCurrentObj && !currentObjMatchesDesired) {
-        warnings.push(
-          `Current OBJ does not match motion object "${desiredObjectName}". Falling back to current OBJ because no matching captured OBJ was loaded.`,
-        );
-      }
-    }
-
-    if (!this.currentObjFileMap || !this.currentObjModel) {
+    if (!desiredObjectName) {
       return { result: null, warnings };
     }
 
-    try {
-      const result = await this.objLoadService.loadFromDroppedFiles(
-        this.currentObjFileMap,
-        this.currentObjModel.modelSourcePath,
-        {
-          normalizeToGround: false,
-        },
-      );
-      warnings.push(...result.warnings);
-      return { result, warnings };
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      warnings.push(
-        `Failed to reload current OBJ model (${this.currentObjModel.modelSourcePath}): ${reason}`,
-      );
-      this.clearCurrentObjState();
-      return { result: null, warnings };
-    }
+    const autoLoad = await this.loadCapturedObjForMotionObjectName(desiredObjectName);
+    warnings.push(...autoLoad.warnings);
+    return { result: autoLoad.result, warnings };
   }
 
   private async loadCapturedObjForMotionObjectName(
@@ -1584,11 +1514,6 @@ export class AppController {
       }
     }
     return bestMatch;
-  }
-
-  private doesObjPathMatchObjectName(objPath: string, objectName: string): boolean {
-    const parsedName = parseCapturedObjNameFromPath(objPath);
-    return parsedName === objectName;
   }
 
   private attachObjToSmplScene(
@@ -1973,7 +1898,7 @@ export class AppController {
       objectNameDetail +
       genderDetail +
       ' ' +
-      'Drop another SMPL model (NPZ/PKL) + motion NPZ set (or motion NPZ only) to replace current playback, drop OBJ to add/replace object rendering, or drop URDF/BVH to switch mode.' +
+      'Object model is auto-matched from motion when available. Drop another SMPL model (NPZ/PKL) + motion NPZ set (or motion NPZ only) to replace current playback, or drop URDF/BVH/OBJ to switch mode.' +
       renderModeDetail +
       viewModeDetail;
 
@@ -1998,7 +1923,7 @@ export class AppController {
     const modelGenderLabel = this.currentSmplModel.modelGender ?? 'unknown';
     const detail =
       `${this.currentSmplModel.jointCount} joints, ${this.currentSmplModel.vertexCount} vertices. ` +
-      `Model: ${this.currentSmplModel.modelSourcePath}. Gender: model=${modelGenderLabel}. Drop SMPL motion NPZ to start playback, drop OBJ to place object beside the model, or drop another SMPL model NPZ/PKL to replace model.` +
+      `Model: ${this.currentSmplModel.modelSourcePath}. Gender: model=${modelGenderLabel}. Drop SMPL motion NPZ to start playback, drop another SMPL model NPZ/PKL to replace model, or drop URDF/BVH/OBJ to switch mode.` +
       renderModeDetail +
       viewModeDetail;
 
@@ -2021,7 +1946,7 @@ export class AppController {
         : ' View mode: free (press Tab to switch).';
     const detail =
       `${this.currentObjModel.meshCount} meshes. Model: ${this.currentObjModel.modelSourcePath}. ` +
-      'Drop another OBJ to replace object, or drop SMPL model (NPZ/PKL) + motion NPZ to pair object and human playback.' +
+      'Drop another OBJ to replace object, or drop URDF/BVH/SMPL to switch mode.' +
       viewModeDetail;
 
     this.setState('ready', {
@@ -2239,9 +2164,7 @@ export class AppController {
         ? this.currentObjModel
           ? ' + OBJ dynamic'
           : ' + object track (model missing)'
-        : this.currentObjModel
-          ? ' + OBJ static'
-          : '';
+        : '';
       const genderTag = this.currentSmplMotion.motionGender
         ? `, ${this.currentSmplMotion.motionGender}`
         : '';
