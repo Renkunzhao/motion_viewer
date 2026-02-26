@@ -181,6 +181,22 @@ export class BvhMotionPlayer {
     }
   }
 
+  setFps(nextFps: number): void {
+    if (!Number.isFinite(nextFps) || nextFps <= 0) {
+      return;
+    }
+
+    this.fps = Math.max(0.1, Number(nextFps.toFixed(3)));
+    if (!this.clip) {
+      return;
+    }
+
+    this.applyFrame(this.currentFrame);
+    if (this.isPlaying) {
+      this.playbackStartTimeMs = this.now() - this.currentFrame * this.getFrameDurationMs();
+    }
+  }
+
   reset(): void {
     this.pause();
     if (!this.clip) {

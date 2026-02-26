@@ -17,15 +17,23 @@
 
       <div id="drop-overlay" class="drop-overlay">
         <div class="drop-overlay__panel">
+          <button
+            id="drop-overlay-dock-btn"
+            type="button"
+            class="drop-overlay__dock-btn"
+            aria-label="Move panel to bottom left"
+            title="Move panel to bottom left"
+          >
+            −
+          </button>
           <p class="drop-overlay__eyebrow">Motion Viewer</p>
           <h1>Motion Viewer</h1>
           <p id="drop-hint" class="drop-overlay__hint">
-            Use the top-left Datasets panel for dataset/model links. Drag files/folders, or click
-            Select Folder / Select Files.
+            Drag files/folders, or click Select Folder / Select File.
           </p>
           <div class="drop-overlay__actions">
             <button id="pick-folder-btn" type="button">Select Folder</button>
-            <button id="pick-files-btn" type="button">Select Files</button>
+            <button id="pick-files-btn" type="button">Select File</button>
             <button id="reset-btn" type="button" class="ghost">Reset</button>
           </div>
         </div>
@@ -34,17 +42,29 @@
       <aside id="dataset-panel" class="dataset-panel" aria-label="Datasets and models">
         <p class="dataset-panel__title">Datasets</p>
         <div class="preset-picker">
-          <label for="preset-select" class="preset-picker__label">Preset Motion</label>
+          <label for="preset-select" class="preset-picker__label">preset motions</label>
           <div class="preset-picker__row">
             <select id="preset-select" class="preset-picker__select">
               <option value="">Loading presets...</option>
             </select>
             <button id="preset-load-btn" type="button" class="ghost">Load Preset</button>
           </div>
-          <label for="obj-select" class="preset-picker__label">Captured OBJ</label>
+          <label for="urdf-select" class="preset-picker__label">URDF Models</label>
+          <div class="preset-picker__row preset-picker__row--single">
+            <select id="urdf-select" class="preset-picker__select">
+              <option value="">No URDF model loaded</option>
+            </select>
+          </div>
+          <label for="smpl-model-select" class="preset-picker__label">SMPL Models</label>
+          <div class="preset-picker__row preset-picker__row--single">
+            <select id="smpl-model-select" class="preset-picker__select">
+              <option value="">No SMPL model loaded</option>
+            </select>
+          </div>
+          <label for="obj-select" class="preset-picker__label">OBJECTS</label>
           <div class="preset-picker__row preset-picker__row--single">
             <select id="obj-select" class="preset-picker__select">
-              <option value="">Loading captured objs...</option>
+              <option value="">Loading objects...</option>
             </select>
           </div>
           <p class="preset-picker__notice">
@@ -60,67 +80,6 @@
           <span id="state-chip" class="state-chip">Idle</span>
           <strong id="status-title">Waiting For Input</strong>
         </div>
-        <div class="status-panel__controls">
-          <button id="show-visual-btn" type="button" class="toggle-chip active">
-            Visual
-          </button>
-          <button id="show-collision-btn" type="button" class="toggle-chip">
-            Collision
-          </button>
-        </div>
-        <p id="status-detail" class="status-panel__detail">
-          Drag and drop to load URDF / CSV / BVH / SMPL model (.npz/.pkl) + motion (.npz).
-        </p>
-        <section id="urdf-list-section" class="urdf-list-section" hidden>
-          <p class="urdf-list-section__title">URDF Files</p>
-          <ul id="urdf-list" class="urdf-list"></ul>
-        </section>
-        <section id="smpl-model-list-section" class="urdf-list-section" hidden>
-          <p class="urdf-list-section__title">SMPL Models</p>
-          <ul id="smpl-model-list" class="urdf-list"></ul>
-        </section>
-        <section id="motion-controls-section" class="motion-controls" hidden>
-          <div class="motion-controls__top">
-            <p class="motion-controls__title">Motion</p>
-            <span id="motion-frame-label" class="motion-controls__frame">Frame 0 / 0</span>
-          </div>
-          <div class="motion-controls__actions">
-            <button id="motion-play-btn" type="button" class="toggle-chip">Play</button>
-            <button id="motion-reset-btn" type="button" class="toggle-chip">Reset</button>
-          </div>
-          <div id="motion-fps-control" class="motion-controls__fps" hidden>
-            <label for="motion-fps-input">FPS</label>
-            <input
-              id="motion-fps-input"
-              class="motion-controls__fps-input"
-              type="number"
-              min="0.1"
-              step="0.1"
-              value="30"
-              inputmode="decimal"
-            />
-          </div>
-          <div id="bvh-unit-control" class="motion-controls__bvh-unit" hidden>
-            <label for="bvh-unit-select">BVH Unit</label>
-            <select id="bvh-unit-select" class="motion-controls__bvh-unit-select">
-              <option value="m">m</option>
-              <option value="dm">dm</option>
-              <option value="cm">cm</option>
-              <option value="inch">inch</option>
-              <option value="feet">feet</option>
-            </select>
-          </div>
-          <input
-            id="motion-frame-slider"
-            class="motion-controls__slider"
-            type="range"
-            min="0"
-            max="0"
-            step="1"
-            value="0"
-          />
-          <p id="motion-name" class="motion-controls__name">No motion loaded</p>
-        </section>
         <section class="shortcuts-panel" aria-label="Keyboard shortcuts">
           <p class="shortcuts-panel__title">Shortcuts</p>
           <ul class="shortcuts-panel__list">
@@ -142,7 +101,62 @@
             </li>
           </ul>
         </section>
-        <ul id="status-warnings" class="status-panel__warnings"></ul>
+        <section id="model-panel" class="model-panel">
+          <div class="model-panel__top">
+            <p id="model-title" class="model-panel__title">Model</p>
+          </div>
+          <div id="urdf-visual-controls" class="model-panel__controls" hidden>
+            <button id="show-visual-btn" type="button" class="toggle-chip active">
+              Visual
+            </button>
+            <button id="show-collision-btn" type="button" class="toggle-chip">
+              Collision
+            </button>
+          </div>
+          <p id="status-detail" class="status-panel__detail">
+            Drag and drop to load URDF / CSV / BVH / SMPL model (.npz/.pkl) + motion (.npz).
+          </p>
+          <ul id="status-warnings" class="status-panel__warnings"></ul>
+        </section>
+        <section id="motion-controls-section" class="motion-controls" hidden>
+          <div class="motion-controls__top">
+            <p id="motion-title" class="motion-controls__title">Motion</p>
+            <span id="motion-frame-label" class="motion-controls__frame">Frame 0 / 0</span>
+          </div>
+          <div class="motion-controls__actions">
+            <button id="view-mode-btn" type="button" class="toggle-chip active">
+              View: Root Lock
+            </button>
+            <button id="motion-play-btn" type="button" class="toggle-chip">Play</button>
+            <button id="motion-reset-btn" type="button" class="toggle-chip">Reset</button>
+          </div>
+          <div id="motion-fps-control" class="motion-controls__fps" hidden>
+            <label for="motion-fps-input">FPS</label>
+            <input
+              id="motion-fps-input"
+              class="motion-controls__fps-input"
+              type="number"
+              min="0.1"
+              step="0.1"
+              value="30"
+              inputmode="decimal"
+            />
+          </div>
+          <input
+            id="motion-frame-slider"
+            class="motion-controls__slider"
+            type="range"
+            min="0"
+            max="0"
+            step="1"
+            value="0"
+          />
+          <ul id="motion-warnings" class="status-panel__warnings motion-controls__warnings"></ul>
+        </section>
+        <section id="mode-props-panel" class="mode-props-panel" hidden>
+          <p class="mode-props-panel__title">Mode Properties</p>
+          <div id="mode-props-list" class="mode-props-panel__chips"></div>
+        </section>
       </aside>
     </div>
 

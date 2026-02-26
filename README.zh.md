@@ -30,7 +30,7 @@
   - URDF 流程：先拖入 `.urdf` 及 mesh 资源，再拖入动作 `.csv`
   - BVH 流程：直接拖入 `.bvh`
   - SMPL 流程：先拖入模型 `.npz` / `basicmodel_*.pkl`，再拖入动作 `.npz`（`poses/trans`）
-- 也可以使用 `Select Folder` / `Select Files` 按钮选择文件。
+- 也可以使用 `Select Folder` / `Select File` 按钮选择文件。
 
 ### 播放控制
 

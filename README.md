@@ -6,7 +6,7 @@ English | [中文](README.zh.md)
 
 Its core purpose is to quickly load robot models in the browser and play motion sequences for model validation, data inspection, debugging, and demos.
 
-## How To Use
+## Usage
 
 ### LAFAN1
 - Download [LAFAN1](https://github.com/ubisoft/ubisoft-laforge-animation-dataset/blob/master/lafan1/lafan1.zip) or [lafan1-resolved](https://github.com/orangeduck/lafan1-resolved#Download).

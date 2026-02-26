@@ -3,46 +3,42 @@ import type { ViewerState } from '../types/viewer';
 export interface StateCopy {
   chip: string;
   title: string;
-  detail: string;
   dropHint: string;
 }
 
 const STATE_COPY: Record<ViewerState, StateCopy> = {
   idle: {
     chip: 'Idle',
-    title: 'Motion Viewer',
-    detail:
-      'Use preset dropdown or drag and drop to load URDF / CSV / BVH / SMPL model (.npz/.pkl) + motion (.npz) / OBJ (.obj).',
-    dropHint:
-      'Use the top-left Datasets panel for dataset/model links. Drag files/folders, or use Select Folder / Select Files.',
+    title: 'Wait for load',
+    dropHint: 'Use preset dropdown to play a demo.\n Drag and drop to load models (.bvh, .urdf, .npz/.pkl (SMPL) ).',
   },
   drag_over: {
     chip: 'Drop',
     title: 'Drop To Load',
-    detail:
-      'Release mouse to parse dropped URDF / CSV / BVH / SMPL model (.npz/.pkl) + motion (.npz) / OBJ (.obj) files.',
-    dropHint: 'Release now to load dropped files.',
+    dropHint: 'Release mouse to parse dropped folder or file.',
   },
   loading: {
     chip: 'Loading',
     title: 'Loading Files',
-    detail: 'Parsing files and preparing scene.',
     dropHint: 'Loading is in progress. Please wait.',
   },
-  ready: {
-    chip: 'Ready',
-    title: 'Viewer Ready',
-    detail:
-      'Select preset, drop another model to replace robot/object, or drop CSV/BVH/SMPL motion assets to play animation.',
+  model_ready: {
+    chip: 'Model Ready',
+    title: 'Model Loaded',
     dropHint:
-      'Use the top-left Datasets panel for dataset/model links, or drop URDF/CSV/BVH/SMPL model (.npz/.pkl) + motion (.npz)/OBJ (.obj) to update current view.',
+      'Drag and drop to load motion (.csv, .npz, .pkl) or objects (.obj).',
+  },
+  playing: {
+    chip: 'Playing',
+    title: 'Motion Playing',
+    dropHint:
+      '',
   },
   error: {
     chip: 'Error',
     title: 'Load Failed',
-    detail: 'Fix the input files and try again.',
     dropHint:
-      'Drop supported files (URDF/CSV/BVH/SMPL model (.npz/.pkl) + motion (.npz)/OBJ (.obj)) to retry.',
+      'Supported format .bvh, .urdf, .npz, .pkl, .csv.',
   },
 };
 

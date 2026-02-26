@@ -20,6 +20,7 @@ import { getBaseName, normalizePath } from '../io/urdf/pathResolver';
 import { UrdfLoadService } from '../io/urdf/UrdfLoadService';
 import { BvhMotionPlayer } from '../motion/BvhMotionPlayer';
 import { G1MotionPlayer, type MotionFrameSnapshot } from '../motion/G1MotionPlayer';
+import { formatMissingObjectModelWarning } from '../motion/objectWarnings';
 import { SmplMotionPlayer } from '../motion/SmplMotionPlayer';
 import { SceneController } from '../viewer/SceneController';
 import { getStateCopy } from './state';
@@ -35,6 +36,35 @@ function requireElement<T extends HTMLElement>(id: string): T {
 
 function isBvhLinearUnit(value: string): value is BvhLinearUnit {
   return BVH_LINEAR_UNITS.includes(value as BvhLinearUnit);
+}
+
+function appendTextWithHttpLinks(element: HTMLElement, text: string): void {
+  element.replaceChildren();
+
+  const urlPattern = /https?:\/\/[^\s]+/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = urlPattern.exec(text)) !== null) {
+    const url = match[0];
+    const startIndex = match.index;
+
+    if (startIndex > cursor) {
+      element.append(document.createTextNode(text.slice(cursor, startIndex)));
+    }
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.textContent = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    element.append(link);
+
+    cursor = startIndex + url.length;
+  }
+
+  if (cursor < text.length) {
+    element.append(document.createTextNode(text.slice(cursor)));
+  }
 }
 
 interface PresetAssetFile {
@@ -377,6 +407,100 @@ function formatSmplModelLabel(path: string): string {
   return `${baseName} (${gender})`;
 }
 
+function mergeUniquePaths(primary: string[], secondary: string[]): string[] {
+  const merged: string[] = [];
+  const seen = new Set<string>();
+  for (const rawPath of [...primary, ...secondary]) {
+    const normalized = normalizePath(rawPath);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    merged.push(normalized);
+  }
+  return merged;
+}
+
+function dedupePresetAssetsByMapAs(files: PresetAssetFile[]): PresetAssetFile[] {
+  const deduped = new Map<string, PresetAssetFile>();
+  for (const file of files) {
+    const normalizedMapPath = normalizePath(file.mapAs);
+    if (!normalizedMapPath || deduped.has(normalizedMapPath)) {
+      continue;
+    }
+    deduped.set(normalizedMapPath, {
+      path: file.path,
+      mapAs: normalizedMapPath,
+    });
+  }
+  return [...deduped.values()];
+}
+
+function isUrdfModelPath(path: string): boolean {
+  return normalizePath(path).toLowerCase().endsWith('.urdf');
+}
+
+function isSmplModelPath(path: string): boolean {
+  const normalized = normalizePath(path).toLowerCase();
+  return normalized.endsWith('.npz') || normalized.endsWith('.pkl');
+}
+
+function collectPresetUrdfModels(manifest: ViewerPresetManifest | null): PresetAssetFile[] {
+  if (!manifest) {
+    return [];
+  }
+
+  const collected: PresetAssetFile[] = [];
+  for (const preset of manifest.presets) {
+    const model = preset.model;
+    if (!model) {
+      continue;
+    }
+
+    if (model.urdfPath && isUrdfModelPath(model.urdfPath)) {
+      const normalizedPath = normalizePath(model.urdfPath);
+      if (normalizedPath) {
+        collected.push({
+          path: normalizedPath,
+          mapAs: normalizedPath,
+        });
+      }
+    }
+
+    for (const file of model.files ?? []) {
+      if (!isUrdfModelPath(file.mapAs)) {
+        continue;
+      }
+      collected.push(file);
+    }
+  }
+
+  return dedupePresetAssetsByMapAs(collected);
+}
+
+function collectPresetSmplModels(manifest: ViewerPresetManifest | null): PresetAssetFile[] {
+  if (!manifest) {
+    return [];
+  }
+
+  const collected: PresetAssetFile[] = [];
+  for (const preset of manifest.presets) {
+    const model = preset.model;
+    if (!model) {
+      continue;
+    }
+
+    for (const file of model.files ?? []) {
+      if (!isSmplModelPath(file.mapAs)) {
+        continue;
+      }
+      collected.push(file);
+    }
+  }
+
+  return dedupePresetAssetsByMapAs(collected);
+}
+
 export class AppController {
   private readonly appRoot: HTMLDivElement;
   private readonly sceneController: SceneController;
@@ -389,26 +513,29 @@ export class AppController {
   private readonly bvhMotionPlayer: BvhMotionPlayer;
   private readonly smplMotionPlayer: SmplMotionPlayer;
   private readonly dropHint: HTMLParagraphElement;
+  private readonly dropOverlayDockButton: HTMLButtonElement;
   private readonly stateChip: HTMLSpanElement;
   private readonly statusTitle: HTMLElement;
+  private readonly modelTitle: HTMLParagraphElement;
   private readonly statusDetail: HTMLParagraphElement;
   private readonly statusWarnings: HTMLUListElement;
-  private readonly urdfListSection: HTMLElement;
-  private readonly urdfList: HTMLUListElement;
-  private readonly smplModelListSection: HTMLElement;
-  private readonly smplModelList: HTMLUListElement;
+  private readonly motionWarningsList: HTMLUListElement;
+  private readonly urdfSelect: HTMLSelectElement;
+  private readonly smplModelSelect: HTMLSelectElement;
+  private readonly urdfVisualControls: HTMLDivElement;
   private readonly showVisualButton: HTMLButtonElement;
   private readonly showCollisionButton: HTMLButtonElement;
+  private readonly viewModeButton: HTMLButtonElement;
+  private readonly modePropsPanel: HTMLElement;
+  private readonly modePropsList: HTMLDivElement;
   private readonly motionControlsSection: HTMLElement;
   private readonly motionPlayButton: HTMLButtonElement;
   private readonly motionResetButton: HTMLButtonElement;
   private readonly motionFpsControl: HTMLDivElement;
   private readonly motionFpsInput: HTMLInputElement;
-  private readonly bvhUnitControl: HTMLDivElement;
-  private readonly bvhUnitSelect: HTMLSelectElement;
   private readonly motionFrameSlider: HTMLInputElement;
+  private readonly motionTitle: HTMLParagraphElement;
   private readonly motionFrameLabel: HTMLSpanElement;
-  private readonly motionName: HTMLParagraphElement;
   private readonly folderInput: HTMLInputElement;
   private readonly fileInput: HTMLInputElement;
   private readonly pickFolderButton: HTMLButtonElement;
@@ -420,6 +547,7 @@ export class AppController {
   private readonly removeDropHandlers: () => void;
   private viewerState: ViewerState = 'idle';
   private titleOverride: string | null = null;
+  private modelTitleOverride: string | null = null;
   private detailOverride: string | null = null;
   private dropHintOverride: string | null = null;
   private warnings: string[] = [];
@@ -480,6 +608,7 @@ export class AppController {
   private currentMotionSourcePath: string | null = null;
   private motionWarnings: string[] = [];
   private motionFrameSnapshot: MotionFrameSnapshot | null = null;
+  private isDropOverlayDocked = false;
   private isMotionPlaying = false;
   private bvhLinearUnit: BvhLinearUnit = 'm';
   private viewMode: ViewMode = 'root_lock';
@@ -495,7 +624,11 @@ export class AppController {
   private recoverReadyTimer: number | null = null;
   private recoverableDropHint: string | null = null;
   private presetManifest: ViewerPresetManifest | null = null;
+  private presetUrdfCatalog: PresetAssetFile[] = [];
+  private presetSmplModelCatalog: PresetAssetFile[] = [];
   private capturedObjCatalog: PresetAssetFile[] = buildDefaultCapturedObjectPresetFiles();
+  private droppedUrdfFileMap: DroppedFileMap = new Map();
+  private droppedSmplModelFileMap: DroppedFileMap = new Map();
   private droppedCapturedObjFileMap: DroppedFileMap = new Map();
   private isPresetLoading = false;
   private isObjCatalogLoading = false;
@@ -568,6 +701,15 @@ export class AppController {
     this.resetViewer();
   };
 
+  private readonly onDropOverlayDockClick = (): void => {
+    if (this.viewerState === 'playing') {
+      return;
+    }
+
+    this.isDropOverlayDocked = !this.isDropOverlayDocked;
+    this.syncDropOverlayDockState();
+  };
+
   private readonly onPresetSelectChange = (): void => {
     this.syncPresetControls();
     const presetId = this.presetSelect.value;
@@ -610,14 +752,54 @@ export class AppController {
     this.syncVisibilityButtons();
   };
 
-  private readonly onUrdfListClick = (event: Event): void => {
-    const target = event.target as HTMLElement | null;
-    const button = target?.closest<HTMLButtonElement>('button[data-urdf-path]');
-    if (!button) {
+  private readonly onViewModeClick = (): void => {
+    this.toggleViewMode();
+  };
+
+  private readonly onModePropsSmplRenderClick = (): void => {
+    this.toggleSmplDisplayMode();
+  };
+
+  private readonly onModePropsBvhUnitChange = (event: Event): void => {
+    if (this.viewerState === 'loading') {
       return;
     }
 
-    const urdfPath = button.dataset.urdfPath;
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement)) {
+      return;
+    }
+
+    const selectedValue = target.value;
+    if (!isBvhLinearUnit(selectedValue)) {
+      target.value = this.bvhLinearUnit;
+      return;
+    }
+
+    const nextUnit = selectedValue;
+    if (nextUnit === this.bvhLinearUnit) {
+      return;
+    }
+
+    if (this.currentMotionKind === 'bvh' && this.currentBvhFileMap) {
+      void this.reloadCurrentBvhWithUnit(nextUnit);
+      return;
+    }
+
+    this.bvhLinearUnit = nextUnit;
+    this.syncMotionControls();
+    if (this.isModelActiveState()) {
+      this.renderCurrentReadyState();
+    }
+  };
+
+  private readonly onUrdfSelectChange = (): void => {
+    if (this.viewerState === 'loading') {
+      this.renderUrdfList();
+      return;
+    }
+
+    const urdfPath = this.urdfSelect.value;
     if (!urdfPath || urdfPath === this.selectedUrdfPath) {
       return;
     }
@@ -625,18 +807,13 @@ export class AppController {
     void this.loadSelectedUrdf(urdfPath);
   };
 
-  private readonly onSmplModelListClick = (event: Event): void => {
+  private readonly onSmplModelSelectChange = (): void => {
     if (this.viewerState === 'loading') {
+      this.renderSmplModelList();
       return;
     }
 
-    const target = event.target as HTMLElement | null;
-    const button = target?.closest<HTMLButtonElement>('button[data-smpl-model-path]');
-    if (!button) {
-      return;
-    }
-
-    const smplModelPath = button.dataset.smplModelPath;
+    const smplModelPath = this.smplModelSelect.value;
     if (!smplModelPath || smplModelPath === this.selectedSmplModelPath) {
       return;
     }
@@ -679,74 +856,55 @@ export class AppController {
   };
 
   private readonly onMotionFpsInput = (): void => {
-    if (this.currentMotionKind !== 'csv' || !this.currentMotionClip) {
-      return;
-    }
-
     const rawFps = Number(this.motionFpsInput.value);
     if (!Number.isFinite(rawFps) || rawFps <= 0) {
       return;
     }
 
-    this.applyCsvMotionFps(rawFps);
+    if (this.currentMotionKind === 'csv' && this.currentMotionClip) {
+      this.applyCsvMotionFps(rawFps);
+      return;
+    }
+    if (this.currentMotionKind === 'bvh' && this.currentBvhMotion) {
+      this.applyBvhMotionFps(rawFps);
+      return;
+    }
+    if (this.currentMotionKind === 'smpl' && this.currentSmplMotion) {
+      this.applySmplMotionFps(rawFps);
+    }
   };
 
   private readonly onMotionFpsChange = (): void => {
     this.syncMotionFpsInput();
   };
 
-  private readonly onBvhUnitChange = (): void => {
-    if (this.viewerState === 'loading') {
-      return;
-    }
-
-    const selectedValue = this.bvhUnitSelect.value;
-    if (!isBvhLinearUnit(selectedValue)) {
-      this.bvhUnitSelect.value = this.bvhLinearUnit;
-      return;
-    }
-
-    const nextUnit = selectedValue;
-    if (nextUnit === this.bvhLinearUnit) {
-      return;
-    }
-
-    if (this.currentMotionKind === 'bvh' && this.currentBvhFileMap) {
-      void this.reloadCurrentBvhWithUnit(nextUnit);
-      return;
-    }
-
-    this.bvhLinearUnit = nextUnit;
-    this.syncMotionControls();
-    if (this.viewerState === 'ready') {
-      this.renderCurrentReadyState();
-    }
-  };
-
   constructor() {
     this.appRoot = requireElement<HTMLDivElement>('app');
     const canvas = requireElement<HTMLCanvasElement>('viewer-canvas');
     this.dropHint = requireElement<HTMLParagraphElement>('drop-hint');
+    this.dropOverlayDockButton = requireElement<HTMLButtonElement>('drop-overlay-dock-btn');
     this.stateChip = requireElement<HTMLSpanElement>('state-chip');
     this.statusTitle = requireElement<HTMLElement>('status-title');
+    this.modelTitle = requireElement<HTMLParagraphElement>('model-title');
     this.statusDetail = requireElement<HTMLParagraphElement>('status-detail');
     this.statusWarnings = requireElement<HTMLUListElement>('status-warnings');
-    this.urdfListSection = requireElement<HTMLElement>('urdf-list-section');
-    this.urdfList = requireElement<HTMLUListElement>('urdf-list');
-    this.smplModelListSection = requireElement<HTMLElement>('smpl-model-list-section');
-    this.smplModelList = requireElement<HTMLUListElement>('smpl-model-list');
+    this.motionWarningsList = requireElement<HTMLUListElement>('motion-warnings');
+    this.urdfSelect = requireElement<HTMLSelectElement>('urdf-select');
+    this.smplModelSelect = requireElement<HTMLSelectElement>('smpl-model-select');
+    this.urdfVisualControls = requireElement<HTMLDivElement>('urdf-visual-controls');
     this.showVisualButton = requireElement<HTMLButtonElement>('show-visual-btn');
     this.showCollisionButton = requireElement<HTMLButtonElement>('show-collision-btn');
+    this.viewModeButton = requireElement<HTMLButtonElement>('view-mode-btn');
+    this.modePropsPanel = requireElement<HTMLElement>('mode-props-panel');
+    this.modePropsList = requireElement<HTMLDivElement>('mode-props-list');
     this.motionControlsSection = requireElement<HTMLElement>('motion-controls-section');
     this.motionPlayButton = requireElement<HTMLButtonElement>('motion-play-btn');
     this.motionResetButton = requireElement<HTMLButtonElement>('motion-reset-btn');
     this.motionFpsControl = requireElement<HTMLDivElement>('motion-fps-control');
     this.motionFpsInput = requireElement<HTMLInputElement>('motion-fps-input');
-    this.bvhUnitControl = requireElement<HTMLDivElement>('bvh-unit-control');
-    this.bvhUnitSelect = requireElement<HTMLSelectElement>('bvh-unit-select');
     this.motionFrameSlider = requireElement<HTMLInputElement>('motion-frame-slider');
+    this.motionTitle = requireElement<HTMLParagraphElement>('motion-title');
     this.motionFrameLabel = requireElement<HTMLSpanElement>('motion-frame-label');
-    this.motionName = requireElement<HTMLParagraphElement>('motion-name');
     this.folderInput = requireElement<HTMLInputElement>('folder-input');
     this.fileInput = requireElement<HTMLInputElement>('file-input');
     this.pickFolderButton = requireElement<HTMLButtonElement>('pick-folder-btn');
@@ -762,7 +920,7 @@ export class AppController {
     this.sceneController.setViewMode(this.viewMode);
     this.sceneController.onViewWarning = (warning) => {
       this.sceneWarning = warning;
-      if (this.viewerState === 'ready') {
+      if (this.isModelActiveState()) {
         this.renderCurrentReadyState();
       }
     };
@@ -783,7 +941,7 @@ export class AppController {
     this.motionPlayer.onPlaybackStateChanged = (isPlaying) => {
       this.isMotionPlaying = isPlaying;
       this.syncMotionControls();
-      if (this.viewerState === 'ready') {
+      if (this.isModelActiveState()) {
         this.renderCurrentReadyState();
       }
     };
@@ -792,7 +950,7 @@ export class AppController {
         this.motionWarnings.push(warning);
       }
 
-      if (this.viewerState === 'ready') {
+      if (this.isModelActiveState()) {
         this.renderCurrentReadyState();
       }
     };
@@ -804,7 +962,7 @@ export class AppController {
     this.bvhMotionPlayer.onPlaybackStateChanged = (isPlaying) => {
       this.isMotionPlaying = isPlaying;
       this.syncMotionControls();
-      if (this.viewerState === 'ready') {
+      if (this.isModelActiveState()) {
         this.renderCurrentReadyState();
       }
     };
@@ -813,7 +971,7 @@ export class AppController {
         this.motionWarnings.push(warning);
       }
 
-      if (this.viewerState === 'ready') {
+      if (this.isModelActiveState()) {
         this.renderCurrentReadyState();
       }
     };
@@ -825,7 +983,7 @@ export class AppController {
     this.smplMotionPlayer.onPlaybackStateChanged = (isPlaying) => {
       this.isMotionPlaying = isPlaying;
       this.syncMotionControls();
-      if (this.viewerState === 'ready') {
+      if (this.isModelActiveState()) {
         this.renderCurrentReadyState();
       }
     };
@@ -834,7 +992,7 @@ export class AppController {
         this.motionWarnings.push(warning);
       }
 
-      if (this.viewerState === 'ready') {
+      if (this.isModelActiveState()) {
         this.renderCurrentReadyState();
       }
     };
@@ -851,24 +1009,26 @@ export class AppController {
     this.pickFolderButton.addEventListener('click', this.onPickFolderClick);
     this.pickFilesButton.addEventListener('click', this.onPickFilesClick);
     this.resetButton.addEventListener('click', this.onResetClick);
+    this.dropOverlayDockButton.addEventListener('click', this.onDropOverlayDockClick);
     this.presetSelect.addEventListener('change', this.onPresetSelectChange);
     this.presetLoadButton.addEventListener('click', this.onPresetLoadClick);
     this.objSelect.addEventListener('change', this.onObjSelectChange);
     this.showVisualButton.addEventListener('click', this.onShowVisualClick);
     this.showCollisionButton.addEventListener('click', this.onShowCollisionClick);
-    this.urdfList.addEventListener('click', this.onUrdfListClick);
-    this.smplModelList.addEventListener('click', this.onSmplModelListClick);
+    this.viewModeButton.addEventListener('click', this.onViewModeClick);
+    this.urdfSelect.addEventListener('change', this.onUrdfSelectChange);
+    this.smplModelSelect.addEventListener('change', this.onSmplModelSelectChange);
     this.motionPlayButton.addEventListener('click', this.onMotionPlayClick);
     this.motionResetButton.addEventListener('click', this.onMotionResetClick);
     this.motionFpsInput.addEventListener('input', this.onMotionFpsInput);
     this.motionFpsInput.addEventListener('change', this.onMotionFpsChange);
-    this.bvhUnitSelect.addEventListener('change', this.onBvhUnitChange);
     this.motionFrameSlider.addEventListener('input', this.onMotionFrameInput);
 
     this.syncVisibilityButtons();
     this.syncMotionControls();
     this.syncPresetControls();
     this.syncObjControls();
+    this.renderUrdfList();
     this.renderSmplModelList();
     this.renderState();
     void this.initializePresetManifest();
@@ -888,8 +1048,10 @@ export class AppController {
   }
 
   resetViewer(): void {
+    this.isDropOverlayDocked = false;
+    this.syncDropOverlayDockState();
     this.droppedFileMap = null;
-    this.availableUrdfPaths = [];
+    this.availableUrdfPaths = this.getMergedUrdfModelPaths();
     this.selectedUrdfPath = null;
     this.lastLoadResult = null;
     this.sceneWarning = null;
@@ -917,18 +1079,19 @@ export class AppController {
     this.pickFolderButton.removeEventListener('click', this.onPickFolderClick);
     this.pickFilesButton.removeEventListener('click', this.onPickFilesClick);
     this.resetButton.removeEventListener('click', this.onResetClick);
+    this.dropOverlayDockButton.removeEventListener('click', this.onDropOverlayDockClick);
     this.presetSelect.removeEventListener('change', this.onPresetSelectChange);
     this.presetLoadButton.removeEventListener('click', this.onPresetLoadClick);
     this.objSelect.removeEventListener('change', this.onObjSelectChange);
     this.showVisualButton.removeEventListener('click', this.onShowVisualClick);
     this.showCollisionButton.removeEventListener('click', this.onShowCollisionClick);
-    this.urdfList.removeEventListener('click', this.onUrdfListClick);
-    this.smplModelList.removeEventListener('click', this.onSmplModelListClick);
+    this.viewModeButton.removeEventListener('click', this.onViewModeClick);
+    this.urdfSelect.removeEventListener('change', this.onUrdfSelectChange);
+    this.smplModelSelect.removeEventListener('change', this.onSmplModelSelectChange);
     this.motionPlayButton.removeEventListener('click', this.onMotionPlayClick);
     this.motionResetButton.removeEventListener('click', this.onMotionResetClick);
     this.motionFpsInput.removeEventListener('input', this.onMotionFpsInput);
     this.motionFpsInput.removeEventListener('change', this.onMotionFpsChange);
-    this.bvhUnitSelect.removeEventListener('change', this.onBvhUnitChange);
     this.motionFrameSlider.removeEventListener('input', this.onMotionFrameInput);
 
     this.urdfLoadService.dispose();
@@ -958,8 +1121,8 @@ export class AppController {
 
     const urdfPaths = this.urdfLoadService.getAvailableUrdfPaths(fileMap);
     if (urdfPaths.length > 0) {
-      this.droppedFileMap = fileMap;
-      this.availableUrdfPaths = urdfPaths;
+      this.registerDroppedUrdfFiles(fileMap);
+      this.availableUrdfPaths = this.getMergedUrdfModelPaths();
       this.selectedUrdfPath = urdfPaths[0] ?? null;
       this.renderUrdfList();
 
@@ -989,6 +1152,10 @@ export class AppController {
 
     const smplScan = await this.smplMotionService.scanDroppedNpzFiles(fileMap);
     if (smplScan.modelPaths.length > 0 || smplScan.motionPaths.length > 0) {
+      if (smplScan.modelPaths.length > 0) {
+        this.registerDroppedSmplModels(fileMap, smplScan.modelPaths);
+      }
+
       if (smplScan.modelPaths.length > 0 && smplScan.motionPaths.length > 0) {
         await this.loadSmplMotionFromDroppedFiles(fileMap);
         return;
@@ -1035,7 +1202,7 @@ export class AppController {
             this.motionWarnings.push(summary);
           }
         }
-        if (this.viewerState === 'ready') {
+        if (this.isModelActiveState()) {
           this.renderCurrentReadyState();
         }
         return;
@@ -1046,29 +1213,45 @@ export class AppController {
 
     this.showRecoverableDropError(
       'No Supported Files',
-      'Drop URDF model files, motion CSV/BVH, SMPL model (NPZ/PKL) + motion NPZ, or OBJ files.',
-      'Unsupported files were ignored. Drop URDF/CSV/BVH/SMPL model NPZ|PKL + motion NPZ/OBJ to continue.',
+      '',
+      'Unsupported files were ignored.\n Check https://github.com/Renkunzhao/motion_viewer#Usage for supported formats.',
     );
   }
 
   private async loadSelectedUrdf(urdfPath: string): Promise<void> {
+    const normalizedUrdfPath = normalizePath(urdfPath);
+    if (!normalizedUrdfPath) {
+      this.setState('error', {
+        title: 'Load Failed',
+        detail: `Invalid URDF path: ${urdfPath}`,
+      });
+      return;
+    }
+
     this.lastLoadResult = null;
     this.sceneWarning = null;
     this.sceneController.setModelUpAxis('+Z');
     this.sceneController.setVisualProfile('default');
-    this.selectedUrdfPath = urdfPath;
+    this.selectedUrdfPath = normalizedUrdfPath;
     this.renderUrdfList();
     this.sceneController.clearRobot();
     this.clearMotionPlayback();
     this.clearCurrentObjState();
     this.setState('loading', {
-      detail: `Loading ${urdfPath} ...`,
+      detail: `Loading ${normalizedUrdfPath} ...`,
     });
 
     try {
-      const result = this.droppedFileMap
-        ? await this.urdfLoadService.loadFromDroppedFiles(this.droppedFileMap, urdfPath)
-        : await this.urdfLoadService.loadFromPresetUrl(urdfPath);
+      const hasLocalUrdf = this.droppedUrdfFileMap.has(normalizedUrdfPath);
+      const sourceFileMap =
+        hasLocalUrdf
+          ? this.droppedUrdfFileMap
+          : this.droppedFileMap && this.droppedFileMap.has(normalizedUrdfPath)
+            ? this.droppedFileMap
+            : null;
+      const result = sourceFileMap
+        ? await this.urdfLoadService.loadFromDroppedFiles(sourceFileMap, normalizedUrdfPath)
+        : await this.urdfLoadService.loadFromPresetUrl(normalizedUrdfPath);
       this.sceneController.setRobot(result.robot);
       this.sceneController.setGeometryVisibility(this.showVisual, this.showCollision);
       this.motionPlayer.attachRobot(result.robot);
@@ -1087,20 +1270,40 @@ export class AppController {
   }
 
   private async loadSelectedSmplModel(smplModelPath: string): Promise<void> {
-    if (!this.currentSmplFileMap) {
+    const normalizedModelPath = normalizePath(smplModelPath);
+    if (!normalizedModelPath) {
+      this.setState('error', {
+        title: 'SMPL Load Failed',
+        detail: `Invalid SMPL model path: ${smplModelPath}`,
+      });
       return;
     }
 
-    if (this.currentMotionKind === 'smpl' && this.currentSmplMotion) {
-      await this.loadSmplMotionFromDroppedFiles(
-        this.currentSmplFileMap,
-        smplModelPath,
-        this.currentSmplMotion.motionSourcePath,
-      );
-      return;
-    }
+    try {
+      const selectedModelFileMap = await this.resolveSmplModelFileMap(normalizedModelPath);
+      if (this.currentMotionKind === 'smpl' && this.currentSmplMotion) {
+        const mergedFileMap = this.currentSmplFileMap
+          ? this.smplMotionService.mergeDroppedFileMaps(this.currentSmplFileMap, selectedModelFileMap)
+          : selectedModelFileMap;
+        await this.loadSmplMotionFromDroppedFiles(
+          mergedFileMap,
+          normalizedModelPath,
+          this.currentSmplMotion.motionSourcePath,
+        );
+        return;
+      }
 
-    await this.loadSmplModelFromDroppedFiles(this.currentSmplFileMap, smplModelPath);
+      const mergedFileMap = this.currentSmplFileMap
+        ? this.smplMotionService.mergeDroppedFileMaps(this.currentSmplFileMap, selectedModelFileMap)
+        : selectedModelFileMap;
+      await this.loadSmplModelFromDroppedFiles(mergedFileMap, normalizedModelPath);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.setState('error', {
+        title: 'SMPL Load Failed',
+        detail: reason,
+      });
+    }
   }
 
   private async loadMotionFromDroppedFiles(
@@ -1130,6 +1333,7 @@ export class AppController {
       this.bvhMotionPlayer.load(null, null);
       this.motionPlayer.attachRobot(loadedRobotResult.robot);
       const bindingReport = this.motionPlayer.loadClip(result.clip);
+      this.sceneController.syncGroundToCurrentRobot();
 
       this.currentMotionClip = result.clip;
       this.currentBvhMotion = null;
@@ -1181,7 +1385,7 @@ export class AppController {
       this.lastLoadResult = null;
       this.sceneWarning = null;
       this.droppedFileMap = null;
-      this.availableUrdfPaths = [];
+      this.availableUrdfPaths = this.getMergedUrdfModelPaths();
       this.selectedUrdfPath = null;
       this.urdfLoadService.dispose();
       this.renderUrdfList();
@@ -1255,10 +1459,9 @@ export class AppController {
         objectWarnings.push(...objectLoad.warnings);
         if (!objectResult) {
           this.clearCurrentObjState();
-          if (hadActiveObj) {
-            objectWarnings.push(
-              'SMPL motion object did not resolve to an OBJ model; cleared active OBJ from scene.',
-            );
+          const missingObjectWarning = formatMissingObjectModelWarning(result.objectName);
+          if (hadActiveObj && !objectWarnings.includes(missingObjectWarning)) {
+            objectWarnings.push(missingObjectWarning);
           }
         }
       } else {
@@ -1279,7 +1482,7 @@ export class AppController {
       this.lastLoadResult = null;
       this.sceneWarning = null;
       this.droppedFileMap = null;
-      this.availableUrdfPaths = [];
+      this.availableUrdfPaths = this.getMergedUrdfModelPaths();
       this.selectedUrdfPath = null;
       this.urdfLoadService.dispose();
       this.renderUrdfList();
@@ -1317,7 +1520,10 @@ export class AppController {
         objectName: result.objectName,
       };
       this.currentSmplFileMap = fileMap;
-      this.availableSmplModelPaths = [...result.availableModelPaths];
+      this.availableSmplModelPaths = mergeUniquePaths(
+        this.getMergedSmplModelPaths(),
+        result.availableModelPaths,
+      );
       this.selectedSmplModelPath = result.selectedModelPath;
       this.renderSmplModelList();
       this.currentMotionKind = 'smpl';
@@ -1365,7 +1571,7 @@ export class AppController {
       this.lastLoadResult = null;
       this.sceneWarning = null;
       this.droppedFileMap = null;
-      this.availableUrdfPaths = [];
+      this.availableUrdfPaths = this.getMergedUrdfModelPaths();
       this.selectedUrdfPath = null;
       this.urdfLoadService.dispose();
       this.renderUrdfList();
@@ -1390,7 +1596,10 @@ export class AppController {
       };
       this.currentSmplMotion = null;
       this.currentSmplFileMap = fileMap;
-      this.availableSmplModelPaths = [...result.availableModelPaths];
+      this.availableSmplModelPaths = mergeUniquePaths(
+        this.getMergedSmplModelPaths(),
+        result.availableModelPaths,
+      );
       this.selectedSmplModelPath = result.selectedModelPath;
       this.renderSmplModelList();
       this.currentMotionKind = null;
@@ -1431,7 +1640,7 @@ export class AppController {
       this.lastLoadResult = null;
       this.sceneWarning = null;
       this.droppedFileMap = null;
-      this.availableUrdfPaths = [];
+      this.availableUrdfPaths = this.getMergedUrdfModelPaths();
       this.selectedUrdfPath = null;
       this.urdfLoadService.dispose();
       this.renderUrdfList();
@@ -1491,7 +1700,7 @@ export class AppController {
     const warnings: string[] = [];
     const candidates = this.findCapturedObjCandidatesForObjectName(objectName);
     if (candidates.length === 0) {
-      warnings.push(`No captured OBJ matched motion object "${objectName}".`);
+      warnings.push(formatMissingObjectModelWarning(objectName));
       return { result: null, warnings };
     }
 
@@ -1507,7 +1716,6 @@ export class AppController {
         );
         this.setCurrentObjState(resolved.fileMap, result);
         warnings.push(...result.warnings);
-        warnings.push(`Auto-loaded captured OBJ "${matched.mapAs}" for object "${objectName}".`);
         return { result, warnings };
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
@@ -1622,6 +1830,76 @@ export class AppController {
     this.objSelect.value = '';
   }
 
+  private getMergedUrdfModelPaths(): string[] {
+    const droppedUrdfPaths = this.urdfLoadService.getAvailableUrdfPaths(this.droppedUrdfFileMap);
+    const presetUrdfPaths = this.presetUrdfCatalog.map((model) => model.mapAs);
+    return mergeUniquePaths(presetUrdfPaths, droppedUrdfPaths);
+  }
+
+  private getMergedSmplModelPaths(): string[] {
+    const droppedModelPaths = [...this.droppedSmplModelFileMap.keys()].filter((path) =>
+      isSmplModelPath(path),
+    );
+    const presetModelPaths = this.presetSmplModelCatalog.map((model) => model.mapAs);
+    return mergeUniquePaths(presetModelPaths, droppedModelPaths);
+  }
+
+  private registerDroppedUrdfFiles(fileMap: DroppedFileMap): void {
+    for (const [path, file] of fileMap) {
+      this.droppedUrdfFileMap.set(path, file);
+    }
+    this.droppedFileMap = this.droppedUrdfFileMap;
+  }
+
+  private registerDroppedSmplModels(fileMap: DroppedFileMap, modelPaths: string[]): void {
+    for (const modelPath of modelPaths) {
+      const normalizedModelPath = normalizePath(modelPath);
+      if (!normalizedModelPath) {
+        continue;
+      }
+      const modelFile = fileMap.get(modelPath) ?? fileMap.get(normalizedModelPath);
+      if (!modelFile) {
+        continue;
+      }
+      this.droppedSmplModelFileMap.set(normalizedModelPath, modelFile);
+    }
+    this.availableSmplModelPaths = mergeUniquePaths(
+      this.getMergedSmplModelPaths(),
+      this.availableSmplModelPaths,
+    );
+    this.renderSmplModelList();
+  }
+
+  private async resolveSmplModelFileMap(modelPath: string): Promise<DroppedFileMap> {
+    const normalizedModelPath = normalizePath(modelPath);
+    if (!normalizedModelPath) {
+      throw new Error(`Invalid SMPL model path: ${modelPath}`);
+    }
+
+    const localDroppedModel = this.droppedSmplModelFileMap.get(normalizedModelPath);
+    if (localDroppedModel) {
+      const localMap: DroppedFileMap = new Map();
+      localMap.set(normalizedModelPath, localDroppedModel);
+      return localMap;
+    }
+
+    const currentModelFile = this.currentSmplFileMap?.get(normalizedModelPath);
+    if (currentModelFile) {
+      const currentMap: DroppedFileMap = new Map();
+      currentMap.set(normalizedModelPath, currentModelFile);
+      return currentMap;
+    }
+
+    const presetModel = this.presetSmplModelCatalog.find(
+      (candidate) => candidate.mapAs === normalizedModelPath,
+    );
+    if (presetModel) {
+      return this.fetchPresetFileMap([presetModel]);
+    }
+
+    throw new Error(`SMPL model "${normalizedModelPath}" is not available in dropped files or presets.`);
+  }
+
   private getCapturedObjCatalogEntries(): PresetAssetFile[] {
     const combined = new Map<string, PresetAssetFile>();
     for (const [rawPath] of this.droppedCapturedObjFileMap) {
@@ -1718,10 +1996,12 @@ export class AppController {
         skeletonHelper,
       };
       this.applySmplDisplayMode();
+      this.syncVisibilityButtons();
       return;
     }
 
     this.currentSmplDisplayNodes = null;
+    this.syncVisibilityButtons();
   }
 
   private getSmplDisplayModeLabel(): 'Mesh' | 'Skeleton' {
@@ -1758,7 +2038,8 @@ export class AppController {
     this.smplDisplayMode = this.smplDisplayMode === 'mesh' ? 'skeleton' : 'mesh';
     this.applySmplDisplayMode();
     this.syncMotionControls();
-    if (this.viewerState === 'ready') {
+    this.syncVisibilityButtons();
+    if (this.isModelActiveState()) {
       this.renderCurrentReadyState();
     }
   }
@@ -1778,7 +2059,7 @@ export class AppController {
     this.currentSmplMotion = null;
     this.currentSmplFileMap = null;
     this.currentSmplDisplayNodes = null;
-    this.availableSmplModelPaths = [];
+    this.availableSmplModelPaths = this.getMergedSmplModelPaths();
     this.selectedSmplModelPath = null;
     this.currentMotionKind = null;
     this.currentMotionSourcePath = null;
@@ -1786,6 +2067,7 @@ export class AppController {
     this.motionFrameSnapshot = null;
     this.isMotionPlaying = false;
     this.syncMotionControls();
+    this.syncVisibilityButtons();
     this.renderSmplModelList();
   }
 
@@ -1909,10 +2191,19 @@ export class AppController {
     this.setState('idle');
   }
 
+  private isModelActiveState(): boolean {
+    return this.viewerState === 'model_ready' || this.viewerState === 'playing';
+  }
+
+  private getLoadedViewerState(): ViewerState {
+    return this.isMotionPlaying && this.hasAnyMotion() ? 'playing' : 'model_ready';
+  }
+
   private setState(
     state: ViewerState,
     overrides: {
       title?: string;
+      modelTitle?: string;
       detail?: string;
       dropHint?: string;
       warnings?: string[];
@@ -1923,7 +2214,8 @@ export class AppController {
     }
 
     this.viewerState = state;
-    this.titleOverride = overrides.title ?? null;
+    this.titleOverride = this.isModelActiveState() ? null : (overrides.title ?? null);
+    this.modelTitleOverride = overrides.modelTitle ?? null;
     this.detailOverride = overrides.detail ?? null;
     this.dropHintOverride = overrides.dropHint ?? null;
     this.warnings = overrides.warnings ? [...overrides.warnings] : [];
@@ -1935,8 +2227,9 @@ export class AppController {
     this.appRoot.dataset.viewerState = this.viewerState;
     this.stateChip.textContent = copy.chip;
     this.statusTitle.textContent = this.titleOverride ?? copy.title;
-    this.statusDetail.textContent = this.detailOverride ?? copy.detail;
-    this.dropHint.textContent = this.dropHintOverride ?? copy.dropHint;
+    this.modelTitle.textContent = this.modelTitleOverride ?? 'Model';
+    this.statusDetail.textContent = this.detailOverride ?? '';
+    appendTextWithHttpLinks(this.dropHint, this.dropHintOverride ?? copy.dropHint);
 
     this.statusWarnings.innerHTML = '';
     for (const warning of this.warnings) {
@@ -1944,31 +2237,35 @@ export class AppController {
       item.textContent = warning;
       this.statusWarnings.appendChild(item);
     }
+    this.statusWarnings.hidden = this.warnings.length === 0;
+
+    this.syncVisibilityButtons();
+    this.syncMotionWarningList();
+    this.syncModePropsPanel();
+    this.syncDropOverlayDockState();
+  }
+
+  private syncDropOverlayDockState(): void {
+    this.appRoot.dataset.dropOverlayDocked = this.isDropOverlayDocked ? 'true' : 'false';
+    const isCornerPosition = this.isDropOverlayDocked || this.viewerState === 'playing';
+    const label = isCornerPosition ? 'Restore panel to center' : 'Move panel to bottom left';
+    this.dropOverlayDockButton.textContent = isCornerPosition ? '□' : '−';
+    this.dropOverlayDockButton.ariaLabel = label;
+    this.dropOverlayDockButton.title = label;
+    this.dropOverlayDockButton.hidden = false;
+    this.dropOverlayDockButton.disabled = this.viewerState === 'playing';
   }
 
   private renderReadyState(result: LoadedRobotResult): void {
-    const motionDetail = this.currentMotionClip
-      ? `Motion: ${this.currentMotionClip.name} (${this.currentMotionClip.frameCount} frames @ ${this.currentMotionClip.fps} FPS, ${this.isMotionPlaying ? 'playing' : 'paused'}). Drop CSV to replace motion.`
-      : 'Drop CSV to load motion, drop BVH to switch into BVH preview mode, drop SMPL model (NPZ/PKL) + motion NPZ to switch into SMPL mode, or drop OBJ to preview an object model.';
-    const viewModeDetail =
-      this.viewMode === 'root_lock'
-        ? 'View mode: root lock (press Tab to switch).'
-        : 'View mode: free (press Tab to switch).';
-    const detailLines = [
-      `${result.jointCount} joints, ${result.linkCount} links, source: ${result.selectedUrdfPath}.`,
-      'Drop URDF to replace robot.',
-      motionDetail,
-    ];
-    if (this.currentMotionSourcePath) {
-      detailLines.push(`Motion source: ${this.currentMotionSourcePath}.`);
-    }
-    detailLines.push(viewModeDetail);
+    const modelLabel = this.formatAssetFileLabel(result.selectedUrdfPath, 'model.urdf');
+    const detailLines = [`${result.jointCount} joints, ${result.linkCount} links.`];
 
-    this.setState('ready', {
+    this.setState(this.getLoadedViewerState(), {
       title: `Loaded ${result.robotName || 'URDF Robot'}`,
+      modelTitle: `Model: ${modelLabel}`,
       detail: detailLines.join('\n'),
       dropHint: this.buildReadyDropHint(),
-      warnings: this.collectReadyWarnings(result.warnings),
+      warnings: this.collectModelWarnings(result.warnings),
     });
   }
 
@@ -1977,24 +2274,18 @@ export class AppController {
       return;
     }
 
-    const viewModeDetail =
-      this.viewMode === 'root_lock'
-        ? 'View mode: root lock (press Tab to switch).'
-        : 'View mode: free (press Tab to switch).';
-    const status = this.isMotionPlaying ? 'playing' : 'paused';
-    const detail = [
-      `${this.currentBvhMotion.jointCount} animated joints, ${this.currentBvhMotion.frameCount} frames @ ${this.currentBvhMotion.fps.toFixed(2)} FPS, ${status}.`,
-      `Unit: ${this.currentBvhMotion.linearUnit}.`,
-      `Source: ${this.currentBvhMotion.sourcePath}.`,
-      'Drop another BVH to replace motion, drop URDF to return to robot mode, drop SMPL model (NPZ/PKL) + motion NPZ to switch mode, or drop OBJ to preview an object model.',
-      viewModeDetail,
-    ].join('\n');
+    const bvhLabel = this.formatAssetFileLabel(
+      this.currentBvhMotion.sourcePath,
+      `${this.currentBvhMotion.name}.bvh`,
+    );
+    const detail = `${this.currentBvhMotion.jointCount} animated joints, ${this.currentBvhMotion.frameCount} frames.`;
 
-    this.setState('ready', {
+    this.setState(this.getLoadedViewerState(), {
       title: `Loaded ${this.currentBvhMotion.name}`,
+      modelTitle: `Model: ${bvhLabel}`,
       detail,
       dropHint: this.buildReadyDropHint(),
-      warnings: this.collectReadyWarnings([]),
+      warnings: this.collectModelWarnings([]),
     });
   }
 
@@ -2003,36 +2294,22 @@ export class AppController {
       return;
     }
 
-    const viewModeDetail =
-      this.viewMode === 'root_lock'
-        ? 'View mode: root lock (press Tab to switch).'
-        : 'View mode: free (press Tab to switch).';
-    const renderModeDetail = `Render: ${this.getSmplDisplayModeLabel()} (press Shift to toggle).`;
-    const status = this.isMotionPlaying ? 'playing' : 'paused';
-    const objectNameDetail = this.currentSmplMotion.objectName
-      ? `Object: ${this.currentSmplMotion.objectName}.`
-      : '';
-    const motionGenderLabel = this.currentSmplMotion.motionGender ?? 'unknown';
-    const modelGenderLabel = this.currentSmplMotion.modelGender ?? 'unknown';
+    const modelLabel = this.formatAssetFileLabel(
+      this.currentSmplMotion.modelSourcePath,
+      `${this.currentSmplMotion.modelName}.npz`,
+    );
     const detailLines = [
-      `${this.currentSmplMotion.jointCount} joints, ${this.currentSmplMotion.vertexCount} vertices, ${this.currentSmplMotion.frameCount} frames @ ${this.currentSmplMotion.fps.toFixed(2)} FPS, ${status}.`,
-      `Model: ${this.currentSmplMotion.modelSourcePath}.`,
-      `Motion: ${this.currentSmplMotion.motionSourcePath}.`,
-      `Gender: motion=${motionGenderLabel}, model=${modelGenderLabel}.`,
-      'Object model is auto-matched from motion when available. Drop another SMPL model (NPZ/PKL) + motion NPZ set (or motion NPZ only) to replace current playback, or drop URDF/BVH/OBJ to switch mode.',
-      renderModeDetail,
-      viewModeDetail,
+      `${this.currentSmplMotion.jointCount} joints, ${this.currentSmplMotion.vertexCount} vertices, ${this.currentSmplMotion.frameCount} frames.`,
     ];
-    if (objectNameDetail) {
-      detailLines.splice(3, 0, objectNameDetail);
-    }
     const detail = detailLines.join('\n');
+    const modelWarnings = this.getSmplModelWarningsFromMotionWarnings();
 
-    this.setState('ready', {
+    this.setState(this.getLoadedViewerState(), {
       title: `Loaded ${this.currentSmplMotion.motionName}`,
+      modelTitle: `Model: ${modelLabel}`,
       detail,
       dropHint: this.buildReadyDropHint(),
-      warnings: this.collectReadyWarnings([]),
+      warnings: this.collectModelWarnings(modelWarnings),
     });
   }
 
@@ -2041,26 +2318,19 @@ export class AppController {
       return;
     }
 
-    const viewModeDetail =
-      this.viewMode === 'root_lock'
-        ? 'View mode: root lock (press Tab to switch).'
-        : 'View mode: free (press Tab to switch).';
-    const renderModeDetail = `Render: ${this.getSmplDisplayModeLabel()} (press Shift to toggle).`;
-    const modelGenderLabel = this.currentSmplModel.modelGender ?? 'unknown';
-    const detail = [
-      `${this.currentSmplModel.jointCount} joints, ${this.currentSmplModel.vertexCount} vertices.`,
-      `Model: ${this.currentSmplModel.modelSourcePath}.`,
-      `Gender: model=${modelGenderLabel}.`,
-      'Drop SMPL motion NPZ to start playback, drop another SMPL model NPZ/PKL to replace model, or drop URDF/BVH/OBJ to switch mode.',
-      renderModeDetail,
-      viewModeDetail,
-    ].join('\n');
+    const modelLabel = this.formatAssetFileLabel(
+      this.currentSmplModel.modelSourcePath,
+      `${this.currentSmplModel.modelName}.npz`,
+    );
+    const detail = `${this.currentSmplModel.jointCount} joints, ${this.currentSmplModel.vertexCount} vertices.`;
+    const modelWarnings = this.getSmplModelWarningsFromMotionWarnings();
 
-    this.setState('ready', {
+    this.setState(this.getLoadedViewerState(), {
       title: `Loaded ${this.currentSmplModel.modelName}`,
+      modelTitle: `Model: ${modelLabel}`,
       detail,
       dropHint: this.buildReadyDropHint(),
-      warnings: this.collectReadyWarnings([]),
+      warnings: this.collectModelWarnings(modelWarnings),
     });
   }
 
@@ -2069,22 +2339,18 @@ export class AppController {
       return;
     }
 
-    const viewModeDetail =
-      this.viewMode === 'root_lock'
-        ? 'View mode: root lock (press Tab to switch).'
-        : 'View mode: free (press Tab to switch).';
-    const detail = [
-      `${this.currentObjModel.meshCount} meshes.`,
-      `Model: ${this.currentObjModel.modelSourcePath}.`,
-      'Drop another OBJ to replace object, or drop URDF/BVH/SMPL to switch mode.',
-      viewModeDetail,
-    ].join('\n');
+    const modelLabel = this.formatAssetFileLabel(
+      this.currentObjModel.modelSourcePath,
+      `${this.currentObjModel.modelName}.obj`,
+    );
+    const detail = `${this.currentObjModel.meshCount} meshes.`;
 
-    this.setState('ready', {
+    this.setState(this.getLoadedViewerState(), {
       title: `Loaded ${this.currentObjModel.modelName}`,
+      modelTitle: `Model: ${modelLabel}`,
       detail,
       dropHint: this.buildReadyDropHint(),
-      warnings: this.collectReadyWarnings([]),
+      warnings: this.collectModelWarnings(this.motionWarnings),
     });
   }
 
@@ -2165,21 +2431,159 @@ export class AppController {
       return undefined;
     }
 
-    const baseReadyHint = getStateCopy('ready').dropHint;
+    const baseReadyHint = getStateCopy('model_ready').dropHint;
     return `${baseReadyHint} Last warning: ${this.recoverableDropHint}`;
   }
 
-  private collectReadyWarnings(robotWarnings: string[]): string[] {
-    const merged = new Set<string>(robotWarnings);
-    for (const warning of this.motionWarnings) {
-      merged.add(warning);
-    }
-
+  private collectModelWarnings(baseWarnings: string[]): string[] {
+    const merged = new Set<string>(baseWarnings);
     if (this.sceneWarning) {
       merged.add(this.sceneWarning);
     }
-
     return [...merged];
+  }
+
+  private isSmplModelWarning(warning: string): boolean {
+    const normalized = warning.toLowerCase();
+    return (
+      normalized.includes('model supports') ||
+      normalized.includes('model appears to be') ||
+      normalized.includes('current model gender') ||
+      normalized.includes('loaded smpl model;') ||
+      normalized.includes('smpl model') ||
+      normalized.includes('model has') ||
+      normalized.includes('gender mismatch')
+    );
+  }
+
+  private getSmplModelWarningsFromMotionWarnings(): string[] {
+    if (!(this.currentSmplModel || this.currentSmplMotion)) {
+      return [];
+    }
+    return this.motionWarnings.filter((warning) => this.isSmplModelWarning(warning));
+  }
+
+  private getMotionPanelWarnings(): string[] {
+    if (this.currentMotionKind !== 'smpl') {
+      return [...this.motionWarnings];
+    }
+
+    const modelWarnings = new Set(this.getSmplModelWarningsFromMotionWarnings());
+    return this.motionWarnings.filter((warning) => !modelWarnings.has(warning));
+  }
+
+  private syncMotionWarningList(): void {
+    this.motionWarningsList.innerHTML = '';
+    if (!this.hasAnyMotion()) {
+      this.motionWarningsList.hidden = true;
+      return;
+    }
+
+    const warnings = this.getMotionPanelWarnings();
+    for (const warning of warnings) {
+      const item = document.createElement('li');
+      item.textContent = warning;
+      this.motionWarningsList.appendChild(item);
+    }
+    this.motionWarningsList.hidden = warnings.length === 0;
+  }
+
+  private formatAssetFileLabel(pathOrName: string | null | undefined, fallback: string): string {
+    if (!pathOrName) {
+      return fallback;
+    }
+
+    const baseName = getBaseName(pathOrName);
+    if (baseName) {
+      return baseName;
+    }
+
+    const normalized = normalizePath(pathOrName);
+    if (normalized) {
+      return normalized;
+    }
+
+    const trimmed = pathOrName.trim();
+    return trimmed || fallback;
+  }
+
+  private appendModePropsChip(text: string): void {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'toggle-chip active mode-props-chip mode-props-chip--button mode-props-chip--static';
+    chip.tabIndex = -1;
+    chip.textContent = text;
+    this.modePropsList.appendChild(chip);
+  }
+
+  private appendModePropsBvhUnitControl(): void {
+    const control = document.createElement('label');
+    control.className = 'mode-props-control';
+
+    const label = document.createElement('span');
+    label.className = 'mode-props-control__label';
+    label.textContent = 'Unit:';
+
+    const select = document.createElement('select');
+    select.className = 'mode-props-control__select';
+    for (const unit of BVH_LINEAR_UNITS) {
+      const option = document.createElement('option');
+      option.value = unit;
+      option.textContent = unit;
+      select.appendChild(option);
+    }
+    select.value = this.currentBvhMotion?.linearUnit ?? this.bvhLinearUnit;
+    select.disabled = this.viewerState === 'loading';
+    select.addEventListener('change', this.onModePropsBvhUnitChange);
+
+    control.append(label, select);
+    this.modePropsList.appendChild(control);
+  }
+
+  private appendModePropsSmplRenderControl(): void {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'toggle-chip active mode-props-chip mode-props-chip--button';
+    button.textContent = `Render: ${this.getSmplDisplayModeLabel()}`;
+    button.disabled = !this.currentSmplDisplayNodes;
+    button.addEventListener('click', this.onModePropsSmplRenderClick);
+    this.modePropsList.appendChild(button);
+  }
+
+  private syncModePropsPanel(): void {
+    this.modePropsList.innerHTML = '';
+    let hasEntries = false;
+
+    if (this.currentMotionKind === 'bvh' && this.currentBvhMotion) {
+      this.appendModePropsBvhUnitControl();
+      hasEntries = true;
+    }
+
+    if (this.currentSmplMotion || this.currentSmplModel || this.currentSmplDisplayNodes) {
+      this.appendModePropsSmplRenderControl();
+      hasEntries = true;
+    }
+
+    if (this.currentSmplMotion) {
+      const motionGender = this.currentSmplMotion.motionGender ?? 'unknown';
+      this.appendModePropsChip(`Gender: ${motionGender}`);
+      hasEntries = true;
+      if (this.currentSmplMotion.objectName) {
+        this.appendModePropsChip(`Object: ${this.currentSmplMotion.objectName}`);
+      }
+    } else if (this.currentSmplModel) {
+      const modelGender = this.currentSmplModel.modelGender ?? 'unknown';
+      this.appendModePropsChip(`Gender: ${modelGender}`);
+      hasEntries = true;
+    }
+
+    if (!hasEntries) {
+      this.modePropsPanel.hidden = true;
+      return;
+    }
+
+    this.modePropsPanel.hidden = false;
+    this.modePropsList.hidden = false;
   }
 
   private applyCsvMotionFps(nextFps: number): void {
@@ -2193,9 +2597,61 @@ export class AppController {
     this.motionPlayer.seek(currentFrame);
     this.syncMotionControls();
 
-    if (this.viewerState === 'ready') {
+    if (this.isModelActiveState()) {
       this.renderCurrentReadyState();
     }
+  }
+
+  private applyBvhMotionFps(nextFps: number): void {
+    if (this.currentMotionKind !== 'bvh' || !this.currentBvhMotion) {
+      return;
+    }
+
+    const safeFps = Math.max(0.1, Number(nextFps.toFixed(3)));
+    this.currentBvhMotion.fps = safeFps;
+    this.bvhMotionPlayer.setFps(safeFps);
+    this.syncMotionControls();
+    if (this.isModelActiveState()) {
+      this.renderCurrentReadyState();
+    }
+  }
+
+  private applySmplMotionFps(nextFps: number): void {
+    if (this.currentMotionKind !== 'smpl' || !this.currentSmplMotion) {
+      return;
+    }
+
+    const safeFps = Math.max(0.1, Number(nextFps.toFixed(3)));
+    this.currentSmplMotion.fps = safeFps;
+    this.smplMotionPlayer.setFps(safeFps);
+    this.syncMotionControls();
+    if (this.isModelActiveState()) {
+      this.renderCurrentReadyState();
+    }
+  }
+
+  private getActiveMotionLabel(): string | null {
+    if (this.currentMotionKind === 'csv') {
+      return this.currentMotionSourcePath
+        ? this.formatAssetFileLabel(this.currentMotionSourcePath, 'motion.csv')
+        : null;
+    }
+
+    if (this.currentMotionKind === 'bvh' && this.currentBvhMotion) {
+      return this.formatAssetFileLabel(
+        this.currentBvhMotion.sourcePath,
+        `${this.currentBvhMotion.name}.bvh`,
+      );
+    }
+
+    if (this.currentMotionKind === 'smpl' && this.currentSmplMotion) {
+      return this.formatAssetFileLabel(
+        this.currentSmplMotion.motionSourcePath,
+        `${this.currentSmplMotion.motionName}.npz`,
+      );
+    }
+
+    return null;
   }
 
   private formatMotionFpsValue(fps: number): string {
@@ -2203,29 +2659,30 @@ export class AppController {
   }
 
   private syncMotionFpsInput(): void {
-    if (this.currentMotionKind === 'csv' && this.currentMotionClip) {
-      this.motionFpsControl.hidden = false;
-      this.motionFpsInput.disabled = false;
-      this.motionFpsInput.value = this.formatMotionFpsValue(this.currentMotionClip.fps);
+    if (!this.hasAnyMotion()) {
+      this.motionFpsControl.hidden = true;
+      this.motionFpsInput.disabled = true;
+      this.motionFpsInput.value = '30';
       return;
     }
 
-    this.motionFpsControl.hidden = true;
-    this.motionFpsInput.disabled = true;
-    this.motionFpsInput.value = '30';
-  }
-
-  private syncBvhUnitControl(): void {
-    const isBvhMode = this.currentMotionKind === 'bvh';
-    this.bvhUnitControl.hidden = !isBvhMode;
-    this.bvhUnitSelect.disabled = !isBvhMode;
-    this.bvhUnitSelect.value = this.bvhLinearUnit;
-    this.bvhUnitSelect.title = `Current BVH unit is ${this.bvhLinearUnit}.`;
+    const fps =
+      this.currentMotionClip?.fps ?? this.currentBvhMotion?.fps ?? this.currentSmplMotion?.fps ?? 30;
+    this.motionFpsControl.hidden = false;
+    this.motionFpsInput.disabled = false;
+    this.motionFpsInput.value = this.formatMotionFpsValue(fps);
   }
 
   private syncVisibilityButtons(): void {
+    const hasUrdfModel = Boolean(this.lastLoadResult);
+    this.urdfVisualControls.hidden = !hasUrdfModel;
+    this.showVisualButton.disabled = !hasUrdfModel;
+    this.showCollisionButton.disabled = !hasUrdfModel;
     this.showVisualButton.classList.toggle('active', this.showVisual);
     this.showCollisionButton.classList.toggle('active', this.showCollision);
+    const isRootLock = this.viewMode === 'root_lock';
+    this.viewModeButton.textContent = isRootLock ? 'View: Root Lock' : 'View: Free';
+    this.viewModeButton.classList.toggle('active', isRootLock);
   }
 
   private syncMotionControls(): void {
@@ -2235,18 +2692,20 @@ export class AppController {
     this.motionResetButton.disabled = !hasMotion;
 
     if (!hasMotion) {
+      this.motionTitle.textContent = 'Motion';
       this.motionPlayButton.textContent = 'Play';
       this.motionPlayButton.classList.remove('active');
       this.motionFrameSlider.min = '0';
       this.motionFrameSlider.max = '0';
       this.motionFrameSlider.value = '0';
       this.motionFrameLabel.textContent = 'Frame 0 / 0';
-      this.motionName.textContent = 'No motion loaded';
       this.syncMotionFpsInput();
-      this.syncBvhUnitControl();
+      this.syncMotionWarningList();
       return;
     }
 
+    const motionLabel = this.getActiveMotionLabel();
+    this.motionTitle.textContent = motionLabel ? `Motion: ${motionLabel}` : 'Motion';
     this.motionPlayButton.textContent = this.isMotionPlaying ? 'Pause' : 'Play';
     this.motionPlayButton.classList.toggle('active', this.isMotionPlaying);
 
@@ -2273,50 +2732,16 @@ export class AppController {
     this.motionFrameSlider.step = '1';
     this.motionFrameSlider.value = String(snapshot.frameIndex);
     this.motionFrameLabel.textContent = `Frame ${snapshot.frameIndex + 1} / ${snapshot.frameCount}`;
-    if (this.currentMotionKind === 'csv' && this.currentMotionClip) {
-      const jointCount = this.currentMotionClip.schema.jointNames.length;
-      this.motionName.textContent = `${this.currentMotionClip.name} · ${this.currentMotionClip.fps} FPS · ${this.currentMotionClip.sourceColumnCount} src cols -> ${this.currentMotionClip.stride} mapped cols (${jointCount} joints + root, ${this.currentMotionClip.csvMode})`;
-      this.syncMotionFpsInput();
-      this.syncBvhUnitControl();
-      return;
-    }
-
-    if (this.currentMotionKind === 'bvh' && this.currentBvhMotion) {
-      this.motionName.textContent =
-        `${this.currentBvhMotion.name} · ${this.currentBvhMotion.fps.toFixed(2)} FPS · ` +
-        `${this.currentBvhMotion.jointCount} joints (BVH, ${this.currentBvhMotion.linearUnit})`;
-      this.syncMotionFpsInput();
-      this.syncBvhUnitControl();
-      return;
-    }
-
-    if (this.currentMotionKind === 'smpl' && this.currentSmplMotion) {
-      const objectState = this.currentSmplMotion.hasObjectMotion
-        ? this.currentObjModel
-          ? ' + OBJ dynamic'
-          : ' + object track (model missing)'
-        : '';
-      const genderTag = this.currentSmplMotion.motionGender
-        ? `, ${this.currentSmplMotion.motionGender}`
-        : '';
-      this.motionName.textContent =
-        `${this.currentSmplMotion.motionName} · ${this.currentSmplMotion.fps.toFixed(2)} FPS · ` +
-        `${this.currentSmplMotion.jointCount} joints · ${this.currentSmplMotion.vertexCount} verts (SMPL${genderTag}, ${this.getSmplDisplayModeLabel()}${objectState})`;
-      this.syncMotionFpsInput();
-      this.syncBvhUnitControl();
-      return;
-    }
-
-    this.motionName.textContent = 'No motion loaded';
     this.syncMotionFpsInput();
-    this.syncBvhUnitControl();
+    this.syncMotionWarningList();
   }
 
   private toggleViewMode(): void {
     this.viewMode = this.viewMode === 'free' ? 'root_lock' : 'free';
     this.sceneController.setViewMode(this.viewMode);
+    this.syncVisibilityButtons();
 
-    if (this.viewerState === 'ready') {
+    if (this.isModelActiveState()) {
       this.renderCurrentReadyState();
     }
   }
@@ -2360,7 +2785,7 @@ export class AppController {
     this.objSelect.innerHTML = '';
     const placeholder = document.createElement('option');
     placeholder.value = '';
-    placeholder.textContent = hasCatalog ? 'Select captured OBJ...' : 'No captured OBJ files';
+    placeholder.textContent = hasCatalog ? 'Select object...' : 'No objects available';
     this.objSelect.appendChild(placeholder);
 
     for (const candidate of catalog) {
@@ -2397,8 +2822,14 @@ export class AppController {
 
   private async initializePresetManifest(): Promise<void> {
     this.presetManifest = null;
+    this.presetUrdfCatalog = [];
+    this.presetSmplModelCatalog = [];
     this.capturedObjCatalog = buildDefaultCapturedObjectPresetFiles();
+    this.availableUrdfPaths = this.getMergedUrdfModelPaths();
+    this.availableSmplModelPaths = this.getMergedSmplModelPaths();
     this.renderPresetOptions();
+    this.renderUrdfList();
+    this.renderSmplModelList();
     this.renderObjOptions();
     this.syncPresetControls();
 
@@ -2413,6 +2844,8 @@ export class AppController {
       const rawManifest = (await response.json()) as unknown;
       const parsedManifest = parsePresetManifest(rawManifest);
       this.presetManifest = parsedManifest;
+      this.presetUrdfCatalog = collectPresetUrdfModels(parsedManifest);
+      this.presetSmplModelCatalog = collectPresetSmplModels(parsedManifest);
       this.capturedObjCatalog =
         parsedManifest.capturedObjects.length > 0
           ? parsedManifest.capturedObjects
@@ -2421,10 +2854,16 @@ export class AppController {
       const reason = error instanceof Error ? error.message : String(error);
       console.warn(`Preset catalog unavailable: ${reason}`);
       this.presetManifest = { presets: [], capturedObjects: [] };
+      this.presetUrdfCatalog = [];
+      this.presetSmplModelCatalog = [];
       this.capturedObjCatalog = buildDefaultCapturedObjectPresetFiles();
     }
 
+    this.availableUrdfPaths = this.getMergedUrdfModelPaths();
+    this.availableSmplModelPaths = this.getMergedSmplModelPaths();
     this.renderPresetOptions();
+    this.renderUrdfList();
+    this.renderSmplModelList();
     this.renderObjOptions();
     this.syncPresetControls();
   }
@@ -2609,8 +3048,8 @@ export class AppController {
             );
           }
 
-          this.droppedFileMap = modelFileMap;
-          this.availableUrdfPaths = urdfPaths;
+          this.registerDroppedUrdfFiles(modelFileMap);
+          this.availableUrdfPaths = mergeUniquePaths(this.getMergedUrdfModelPaths(), urdfPaths);
           this.selectedUrdfPath = selectedUrdfPath;
           this.renderUrdfList();
           await this.loadSelectedUrdf(selectedUrdfPath);
@@ -2628,7 +3067,10 @@ export class AppController {
           }
 
           this.droppedFileMap = null;
-          this.availableUrdfPaths = [selectedUrdfPath];
+          this.availableUrdfPaths = mergeUniquePaths(
+            this.getMergedUrdfModelPaths(),
+            [selectedUrdfPath],
+          );
           this.selectedUrdfPath = selectedUrdfPath;
           this.renderUrdfList();
           await this.loadSelectedUrdf(selectedUrdfPath);
@@ -2698,46 +3140,60 @@ export class AppController {
   }
 
   private renderUrdfList(): void {
-    const showList = this.availableUrdfPaths.length > 1;
-    this.urdfListSection.hidden = !showList;
-    this.urdfList.innerHTML = '';
+    const previousValue = this.urdfSelect.value;
+    const hasModels = this.availableUrdfPaths.length > 0;
 
-    if (!showList) {
-      return;
-    }
+    this.urdfSelect.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = hasModels ? 'Select URDF model...' : 'No URDF model loaded';
+    this.urdfSelect.appendChild(placeholder);
 
     for (const urdfPath of this.availableUrdfPaths) {
-      const listItem = document.createElement('li');
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.dataset.urdfPath = urdfPath;
-      button.textContent = urdfPath;
-      button.title = urdfPath;
-      button.classList.toggle('active', urdfPath === this.selectedUrdfPath);
-      listItem.appendChild(button);
-      this.urdfList.appendChild(listItem);
+      const option = document.createElement('option');
+      option.value = urdfPath;
+      option.textContent = getBaseName(urdfPath) || urdfPath;
+      option.title = urdfPath;
+      this.urdfSelect.appendChild(option);
     }
+
+    if (this.selectedUrdfPath && this.availableUrdfPaths.includes(this.selectedUrdfPath)) {
+      this.urdfSelect.value = this.selectedUrdfPath;
+    } else if (this.availableUrdfPaths.includes(previousValue)) {
+      this.urdfSelect.value = previousValue;
+    } else {
+      this.urdfSelect.value = '';
+    }
+
+    this.urdfSelect.disabled = this.availableUrdfPaths.length === 0;
   }
 
   private renderSmplModelList(): void {
-    const showList = this.availableSmplModelPaths.length > 1;
-    this.smplModelListSection.hidden = !showList;
-    this.smplModelList.innerHTML = '';
+    const previousValue = this.smplModelSelect.value;
+    const hasModels = this.availableSmplModelPaths.length > 0;
 
-    if (!showList) {
-      return;
-    }
+    this.smplModelSelect.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = hasModels ? 'Select SMPL model...' : 'No SMPL model loaded';
+    this.smplModelSelect.appendChild(placeholder);
 
     for (const smplModelPath of this.availableSmplModelPaths) {
-      const listItem = document.createElement('li');
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.dataset.smplModelPath = smplModelPath;
-      button.textContent = formatSmplModelLabel(smplModelPath);
-      button.title = smplModelPath;
-      button.classList.toggle('active', smplModelPath === this.selectedSmplModelPath);
-      listItem.appendChild(button);
-      this.smplModelList.appendChild(listItem);
+      const option = document.createElement('option');
+      option.value = smplModelPath;
+      option.textContent = formatSmplModelLabel(smplModelPath);
+      option.title = smplModelPath;
+      this.smplModelSelect.appendChild(option);
     }
+
+    if (this.selectedSmplModelPath && this.availableSmplModelPaths.includes(this.selectedSmplModelPath)) {
+      this.smplModelSelect.value = this.selectedSmplModelPath;
+    } else if (this.availableSmplModelPaths.includes(previousValue)) {
+      this.smplModelSelect.value = previousValue;
+    } else {
+      this.smplModelSelect.value = '';
+    }
+
+    this.smplModelSelect.disabled = this.availableSmplModelPaths.length === 0;
   }
 }

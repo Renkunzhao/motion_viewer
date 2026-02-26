@@ -529,9 +529,6 @@ export class SmplMotionService {
     }
 
     const warnings = new Set<string>();
-    if (!preferredModelPath && scan.modelPaths.length > 1) {
-      warnings.add(`Multiple SMPL model files found. Auto-selected ${selectedModelPath}.`);
-    }
 
     const modelName = buildDisplayName(selectedModelPath, 'smpl_model');
     const model = await this.loadModelFromFile(modelFile, selectedModelPath, null, warnings);
@@ -660,11 +657,7 @@ export class SmplMotionService {
       modelSelectionDecision = selectModelPathForMotionGender(scan.modelPaths, motionGender);
       selectedModelPath = modelSelectionDecision?.path ?? null;
       if (selectedModelPath && modelSelectionDecision) {
-        if (modelSelectionDecision.reason === 'gender_match') {
-          warnings.add(
-            `Motion gender is ${motionGender}; auto-selected matching model ${selectedModelPath}.`,
-          );
-        } else if (modelSelectionDecision.reason === 'gender_multi_match') {
+        if (modelSelectionDecision.reason === 'gender_multi_match') {
           warnings.add(
             `Motion gender is ${motionGender}; multiple matching models found, auto-selected ${selectedModelPath}.`,
           );
@@ -676,8 +669,6 @@ export class SmplMotionService {
           warnings.add(
             `Motion gender is ${motionGender}; no matching model gender found, auto-selected ${selectedModelPath}.`,
           );
-        } else {
-          warnings.add(`Multiple SMPL model files found. Auto-selected ${selectedModelPath}.`);
         }
       }
     } else {
@@ -690,10 +681,6 @@ export class SmplMotionService {
     if (!selectedModelPath) {
       throw new Error('Both SMPL model and motion .npz files are required.');
     }
-    if (!preferredModelPath && scan.modelPaths.length > 1 && !modelSelectionDecision) {
-      warnings.add(`Multiple SMPL model files found. Auto-selected ${selectedModelPath}.`);
-    }
-
     const modelFile = fileMap.get(selectedModelPath);
     if (!modelFile) {
       throw new Error(`Selected SMPL model file is missing from file map: ${selectedModelPath}`);
