@@ -59,8 +59,12 @@ function getSafeMaterialColor(candidate: any): any {
   const luminance =
     sourceColor.r * 0.2126 + sourceColor.g * 0.7152 + sourceColor.b * 0.0722;
 
-  // Some imported MeshBasic materials come in as near-black; keep a readable default.
-  if (luminance < DARK_COLOR_EPSILON) {
+  // Only rescue clearly broken unlit imports; preserve intentional dark Lambert/Phong assets.
+  if (
+    candidate?.isMeshBasicMaterial &&
+    !candidate?.map &&
+    luminance < DARK_COLOR_EPSILON
+  ) {
     return fallbackColor;
   }
 

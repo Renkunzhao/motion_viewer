@@ -15,6 +15,7 @@ import type {
   UrdfRobotLike,
 } from '../../types/viewer';
 import {
+  extractRecoverablePathFromBlobUrl,
   getBaseName,
   getDirectoryPath,
   getFileExtension,
@@ -126,6 +127,22 @@ function resolveRemoteResourceUrl(requestedPath: string, selectedUrdfPath: strin
   return null;
 }
 
+function stripEmbeddedSceneLights(root: any): any {
+  const lightsToRemove: any[] = [];
+  root.traverse((child: unknown) => {
+    const maybeLight = child as any;
+    if (maybeLight?.isLight) {
+      lightsToRemove.push(maybeLight);
+    }
+  });
+
+  for (const light of lightsToRemove) {
+    light.parent?.remove(light);
+  }
+
+  return root;
+}
+
 export class UrdfLoadService {
   private readonly objectUrls = new Set<string>();
 
@@ -209,13 +226,18 @@ export class UrdfLoadService {
     };
 
     loader.manager.setURLModifier((requestedUrl: string) => {
-      if (requestedUrl.startsWith('blob:')) {
+      const recoverableBlobPath = extractRecoverablePathFromBlobUrl(requestedUrl);
+      if (requestedUrl.startsWith('blob:') && !recoverableBlobPath) {
         return requestedUrl;
       }
 
-      const fileKey = resolveFileKeyForRequest(requestedUrl, selectedUrdfPath, fileMap);
+      const fileKey = resolveFileKeyForRequest(
+        recoverableBlobPath ?? requestedUrl,
+        selectedUrdfPath,
+        fileMap,
+      );
       if (!fileKey) {
-        reportMissingResource(requestedUrl);
+        reportMissingResource(recoverableBlobPath ?? requestedUrl);
         return requestedUrl;
       }
 
@@ -267,7 +289,7 @@ export class UrdfLoadService {
         case 'dae':
           new ColladaLoader(manager).load(
             blobUrl,
-            (result: any) => done(result?.scene ?? new Group()),
+            (result: any) => done(stripEmbeddedSceneLights(result?.scene ?? new Group())),
             undefined,
             onError,
           );
@@ -309,13 +331,17 @@ export class UrdfLoadService {
     loader.parseCollision = true;
 
     loader.manager.setURLModifier((requestedUrl: string) => {
-      if (requestedUrl.startsWith('blob:')) {
+      const recoverableBlobPath = extractRecoverablePathFromBlobUrl(requestedUrl);
+      if (requestedUrl.startsWith('blob:') && !recoverableBlobPath) {
         return requestedUrl;
       }
 
-      const resolvedUrl = resolveRemoteResourceUrl(requestedUrl, selectedUrdfPath);
+      const resolvedUrl = resolveRemoteResourceUrl(
+        recoverableBlobPath ?? requestedUrl,
+        selectedUrdfPath,
+      );
       if (!resolvedUrl) {
-        warnings.add(`Missing resource: ${requestedUrl}`);
+        warnings.add(`Missing resource: ${recoverableBlobPath ?? requestedUrl}`);
         return requestedUrl;
       }
 
@@ -365,7 +391,7 @@ export class UrdfLoadService {
         case 'dae':
           new ColladaLoader(manager).load(
             resolvedUrl,
-            (result: any) => done(result?.scene ?? new Group()),
+            (result: any) => done(stripEmbeddedSceneLights(result?.scene ?? new Group())),
             undefined,
             onError,
           );
@@ -430,3 +456,5 @@ export class UrdfLoadService {
     });
   }
 }
+
+export { stripEmbeddedSceneLights };

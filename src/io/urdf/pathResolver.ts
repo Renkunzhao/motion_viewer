@@ -95,6 +95,26 @@ export function getFileExtension(path: string): string {
   return baseName.slice(dotIndex + 1).toLowerCase();
 }
 
+export function extractRecoverablePathFromBlobUrl(pathOrUrl: string): string | null {
+  const trimmed = pathOrUrl.trim();
+  if (!trimmed.startsWith('blob:')) {
+    return null;
+  }
+
+  const malformedBlobMatch = trimmed.match(/^blob:https?:\/\/[^/]+\/(.+)$/i);
+  if (!malformedBlobMatch || !malformedBlobMatch[1]) {
+    return null;
+  }
+
+  const blobTail = malformedBlobMatch[1];
+  const fileName = blobTail.split('/').pop()?.split('#')[0]?.split('?')[0] ?? '';
+  if (!/\.[a-zA-Z\d]{2,8}$/.test(fileName)) {
+    return null;
+  }
+
+  return blobTail;
+}
+
 function extractPathFromUrl(pathOrUrl: string): string {
   const trimmed = pathOrUrl.trim();
   if (!trimmed) {
@@ -106,9 +126,9 @@ function extractPathFromUrl(pathOrUrl: string): string {
   }
 
   if (trimmed.startsWith('blob:')) {
-    const malformedBlobMatch = trimmed.match(/^blob:https?:\/\/[^/]+\/(.+)$/i);
-    if (malformedBlobMatch && malformedBlobMatch[1]) {
-      return malformedBlobMatch[1];
+    const recoverableBlobPath = extractRecoverablePathFromBlobUrl(trimmed);
+    if (recoverableBlobPath) {
+      return recoverableBlobPath;
     }
 
     return trimmed;

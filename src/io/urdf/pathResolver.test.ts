@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  extractRecoverablePathFromBlobUrl,
   normalizePath,
   resolveFileKeyForRequest,
   selectPrimaryUrdfPath,
@@ -38,5 +39,32 @@ describe('pathResolver', () => {
     expect(resolveFileKeyForRequest('pelvis.STL', 'g1/g1.urdf', fileMap)).toBe(
       'g1/meshes/pelvis.STL',
     );
+  });
+
+  it('recovers file-like blob tails used by collada texture requests', () => {
+    expect(
+      extractRecoverablePathFromBlobUrl('blob:https://viewer.roboticsfan.com/trunk_A1.png'),
+    ).toBe('trunk_A1.png');
+    expect(
+      extractRecoverablePathFromBlobUrl(
+        'blob:https://viewer.roboticsfan.com/70f4b3a7-88e9-48d8-aaf2-cf6c3214d669',
+      ),
+    ).toBeNull();
+  });
+
+  it('resolves malformed blob texture urls through basename fallback', () => {
+    const fileMap: DroppedFileMap = new Map([
+      ['a1_description/urdf/a1.urdf', createMockFile('<robot/>', 'a1.urdf')],
+      ['a1_description/meshes/trunk.dae', createMockFile('dae', 'trunk.dae')],
+      ['a1_description/meshes/trunk_A1.png', createMockFile('png', 'trunk_A1.png')],
+    ]);
+
+    expect(
+      resolveFileKeyForRequest(
+        'blob:https://viewer.roboticsfan.com/trunk_A1.png',
+        'a1_description/urdf/a1.urdf',
+        fileMap,
+      ),
+    ).toBe('a1_description/meshes/trunk_A1.png');
   });
 });
