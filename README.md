@@ -38,9 +38,16 @@ python3 tools/convert_omomo_seq_to_motion_npz.py \
 - Drag and drop `captured_objects` object model folder.
 - Drag and drop motion file (.npz).
 
+### MimicKit
+- Download [unitree_ros](https://github.com/unitreerobotics/unitree_ros.git) for unitree robots urdf.
+- Drag and drop `g1_description/go2_description` folder under `unitree_ros/robots` to load urdf.
+- Follow [MimicKit](https://github.com/xbpeng/MimicKit.git) readme to get motion data.
+- Drag and drop any motion file (.pkl) under corrospond folder `Mimickit/data/motions/`. 
+
 ### Preset
 - `dance1_subject1.bvh` bvh from [LAFAN1](https://github.com/ubisoft/ubisoft-laforge-animation-dataset/blob/master/lafan1/lafan1.zip).
 - `g1`,`h1`,`h1_2` urdf and corrospnd `dance1_subject1.csv` from [Unitree-LAFAN1-Retargeting](https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset).
+- `go2`
 - `SMPL-X Female` model from [SMPL-X](https://download.is.tue.mpg.de/download.php?domain=smplx&sfile=smplx_lockedhead_20230207.zip).
 - `SMPL-X G/Male2MartialArtsExtended_c3d/Extended_3_stageii.npz` from [ACCAD](https://amass.is.tue.mpg.de/download.php).
 - `largetable_cleaned_simplified.obj` from [OMOMO](https://drive.google.com/file/d/1tZVqLB7II0whI-Qjz-z-AU3ponSEyAmm/view?usp=sharing).

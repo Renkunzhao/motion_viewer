@@ -14,6 +14,7 @@ import {
   type BvhLinearUnit,
 } from '../io/motion/BvhMotionService';
 import { CsvMotionService } from '../io/motion/CsvMotionService';
+import { MimicKitMotionService } from '../io/motion/MimicKitMotionService';
 import { SmplMotionService } from '../io/motion/SmplMotionService';
 import { ObjLoadService, type ObjModelLoadResult } from '../io/object/ObjLoadService';
 import { getBaseName, normalizePath } from '../io/urdf/pathResolver';
@@ -79,7 +80,7 @@ interface PresetModelDefinition {
 }
 
 interface PresetMotionDefinition {
-  kind: 'csv' | 'bvh' | 'smpl';
+  kind: 'csv' | 'mimickit' | 'bvh' | 'smpl';
   files?: PresetAssetFile[];
   path?: string;
   selectedMotionPath?: string;
@@ -96,6 +97,13 @@ interface ViewerPresetDefinition {
 interface ViewerPresetManifest {
   presets: ViewerPresetDefinition[];
   capturedObjects: PresetAssetFile[];
+}
+
+type UrdfMotionKind = 'csv' | 'mimickit';
+type ViewerMotionKind = UrdfMotionKind | 'bvh' | 'smpl';
+
+function isUrdfMotionKind(kind: ViewerMotionKind | null): kind is UrdfMotionKind {
+  return kind === 'csv' || kind === 'mimickit';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -241,8 +249,10 @@ function parsePresetManifest(value: unknown): ViewerPresetManifest {
       }
 
       const kind = parseNonEmptyString(item.motion.kind, `presets[${index}].motion.kind`).toLowerCase();
-      if (kind !== 'csv' && kind !== 'bvh' && kind !== 'smpl') {
-        throw new Error(`presets[${index}].motion.kind must be "csv", "bvh", or "smpl".`);
+      if (kind !== 'csv' && kind !== 'mimickit' && kind !== 'bvh' && kind !== 'smpl') {
+        throw new Error(
+          `presets[${index}].motion.kind must be "csv", "mimickit", "bvh", or "smpl".`,
+        );
       }
 
       motion = {
@@ -501,11 +511,311 @@ function collectPresetSmplModels(manifest: ViewerPresetManifest | null): PresetA
   return dedupePresetAssetsByMapAs(collected);
 }
 
+type SelectableModelKind = 'urdf' | 'smpl' | 'bvh';
+type SelectableMotionKind = 'csv' | 'mimickit' | 'bvh' | 'smpl';
+
+interface SelectableModelOption {
+  key: string;
+  label: string;
+  kind: SelectableModelKind;
+  path: string;
+  bindingTag: string | null;
+  source: 'preset' | 'dropped' | 'builtin';
+  files?: PresetAssetFile[];
+  description?: string;
+}
+
+interface SelectableMotionOption {
+  key: string;
+  label: string;
+  kind: SelectableMotionKind;
+  selectedMotionPath: string;
+  files: PresetAssetFile[];
+  bindingTags: string[];
+  description?: string;
+}
+
+const BVH_PREVIEW_MODEL_KEY = 'builtin:bvh-preview';
+
+function buildPresetAssetFileFromPath(path: string): PresetAssetFile {
+  return {
+    path: normalizePresetFetchPath(path),
+    mapAs: normalizePresetMapPath(path),
+  };
+}
+
+function inferUrdfBindingTag(path: string): string | null {
+  const normalized = normalizePath(path).toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  if (
+    normalized.includes('/go2/') ||
+    normalized.includes('go2_description') ||
+    normalized.includes('/go2_')
+  ) {
+    return 'urdf:go2';
+  }
+  if (
+    normalized.includes('/g1/') ||
+    normalized.includes('g1_description') ||
+    normalized.includes('/g1_')
+  ) {
+    return 'urdf:g1';
+  }
+  if (normalized.includes('h1_2')) {
+    return 'urdf:h1_2';
+  }
+  if (normalized.includes('/h1/') || normalized.includes('h1_description')) {
+    return 'urdf:h1';
+  }
+
+  return null;
+}
+
+function inferSmplBindingTag(path: string): string {
+  const normalized = normalizePath(path).toLowerCase();
+  if (normalized.includes('smplx')) {
+    return 'smpl:smplx';
+  }
+  if (normalized.includes('smplh')) {
+    return 'smpl:smplh';
+  }
+  return 'smpl:smpl';
+}
+
+function inferModelBindingTag(kind: SelectableModelKind, path: string): string | null {
+  if (kind === 'bvh') {
+    return 'bvh';
+  }
+  if (kind === 'smpl') {
+    return inferSmplBindingTag(path);
+  }
+  return inferUrdfBindingTag(path);
+}
+
+function formatSelectableModelLabel(kind: SelectableModelKind, path: string): string {
+  if (kind === 'bvh') {
+    return 'BVH Preview';
+  }
+
+  if (kind === 'smpl') {
+    return `SMPL · ${formatSmplModelLabel(path)}`;
+  }
+
+  const bindingTag = inferUrdfBindingTag(path);
+  if (bindingTag === 'urdf:g1') {
+    return 'URDF · G1';
+  }
+  if (bindingTag === 'urdf:go2') {
+    return 'URDF · Go2';
+  }
+  if (bindingTag === 'urdf:h1') {
+    return 'URDF · H1';
+  }
+  if (bindingTag === 'urdf:h1_2') {
+    return 'URDF · H1-2';
+  }
+
+  return `URDF · ${getBaseName(path) || path}`;
+}
+
+function formatSelectableMotionLabel(kind: SelectableMotionKind, path: string): string {
+  const baseName = getBaseName(path) || path;
+  if (kind === 'csv') {
+    return `CSV · ${baseName}`;
+  }
+  if (kind === 'mimickit') {
+    return `MimicKit · ${baseName}`;
+  }
+  if (kind === 'bvh') {
+    return `BVH · ${baseName}`;
+  }
+  return `SMPL · ${baseName}`;
+}
+
+function resolvePresetModelSelection(
+  model: PresetModelDefinition,
+): {
+  kind: 'urdf' | 'smpl';
+  path: string;
+  files?: PresetAssetFile[];
+} | null {
+  const urdfFiles = (model.files ?? []).filter((file) => isUrdfModelPath(file.mapAs));
+  if (model.urdfPath || urdfFiles.length > 0) {
+    const path = model.selectedUrdfPath ?? model.urdfPath ?? urdfFiles[0]?.mapAs ?? '';
+    const normalizedPath = normalizePath(path);
+    if (!normalizedPath) {
+      return null;
+    }
+    return {
+      kind: 'urdf',
+      path: normalizedPath,
+      files: model.files,
+    };
+  }
+
+  const smplFiles = (model.files ?? []).filter((file) => isSmplModelPath(file.mapAs));
+  if (smplFiles.length > 0) {
+    return {
+      kind: 'smpl',
+      path: smplFiles[0]?.mapAs ?? '',
+      files: model.files,
+    };
+  }
+
+  return null;
+}
+
+function resolvePresetMotionFiles(motion: PresetMotionDefinition): PresetAssetFile[] {
+  if (motion.files && motion.files.length > 0) {
+    return motion.files;
+  }
+  if (motion.path) {
+    return [buildPresetAssetFileFromPath(motion.path)];
+  }
+  return [];
+}
+
+function resolvePresetMotionPath(
+  motion: PresetMotionDefinition,
+  files: PresetAssetFile[],
+): string | null {
+  const preferredPath =
+    motion.selectedMotionPath ?? (motion.path ? normalizePresetMapPath(motion.path) : null);
+  if (preferredPath) {
+    return preferredPath;
+  }
+  return files[0]?.mapAs ?? null;
+}
+
+function inferMotionBindingTags(
+  kind: SelectableMotionKind,
+  motionPath: string,
+  pairedModelPath?: string | null,
+): string[] {
+  const tags = new Set<string>();
+
+  if (kind === 'bvh') {
+    tags.add('bvh');
+  } else if (kind === 'smpl') {
+    tags.add(pairedModelPath ? inferSmplBindingTag(pairedModelPath) : inferSmplBindingTag(motionPath));
+  } else {
+    const inferred = pairedModelPath ? inferUrdfBindingTag(pairedModelPath) : inferUrdfBindingTag(motionPath);
+    if (inferred) {
+      tags.add(inferred);
+    }
+  }
+
+  return [...tags];
+}
+
+function collectPresetModelOptions(manifest: ViewerPresetManifest | null): SelectableModelOption[] {
+  if (!manifest) {
+    return [];
+  }
+
+  const options = new Map<string, SelectableModelOption>();
+  let hasBvhMotion = false;
+
+  for (const preset of manifest.presets) {
+    if (preset.motion?.kind === 'bvh') {
+      hasBvhMotion = true;
+    }
+
+    if (!preset.model) {
+      continue;
+    }
+
+    const selection = resolvePresetModelSelection(preset.model);
+    if (!selection || !selection.path) {
+      continue;
+    }
+
+    const key = `${selection.kind}:${selection.path}`;
+    if (options.has(key)) {
+      continue;
+    }
+
+    options.set(key, {
+      key,
+      label: formatSelectableModelLabel(selection.kind, selection.path),
+      kind: selection.kind,
+      path: selection.path,
+      bindingTag: inferModelBindingTag(selection.kind, selection.path),
+      source: 'preset',
+      files: selection.files,
+      description: preset.description,
+    });
+  }
+
+  if (hasBvhMotion) {
+    options.set(BVH_PREVIEW_MODEL_KEY, {
+      key: BVH_PREVIEW_MODEL_KEY,
+      label: 'BVH Preview',
+      kind: 'bvh',
+      path: BVH_PREVIEW_MODEL_KEY,
+      bindingTag: 'bvh',
+      source: 'builtin',
+      description: 'Built-in BVH preview skeleton.',
+    });
+  }
+
+  return [...options.values()].sort((left, right) => left.label.localeCompare(right.label));
+}
+
+function collectPresetMotionOptions(manifest: ViewerPresetManifest | null): SelectableMotionOption[] {
+  if (!manifest) {
+    return [];
+  }
+
+  const options = new Map<string, SelectableMotionOption>();
+  for (const preset of manifest.presets) {
+    if (!preset.motion) {
+      continue;
+    }
+
+    const files = resolvePresetMotionFiles(preset.motion);
+    if (files.length === 0) {
+      continue;
+    }
+
+    const selectedMotionPath = resolvePresetMotionPath(preset.motion, files);
+    if (!selectedMotionPath) {
+      continue;
+    }
+
+    const pairedModel = preset.model ? resolvePresetModelSelection(preset.model) : null;
+    const kind = preset.motion.kind as SelectableMotionKind;
+    const key = `${kind}:${selectedMotionPath}`;
+    const bindingTags = inferMotionBindingTags(kind, selectedMotionPath, pairedModel?.path ?? null);
+    const existing = options.get(key);
+    if (existing) {
+      existing.bindingTags = [...new Set([...existing.bindingTags, ...bindingTags])];
+      continue;
+    }
+
+    options.set(key, {
+      key,
+      label: formatSelectableMotionLabel(kind, selectedMotionPath),
+      kind,
+      selectedMotionPath,
+      files,
+      bindingTags,
+      description: preset.description,
+    });
+  }
+
+  return [...options.values()].sort((left, right) => left.label.localeCompare(right.label));
+}
+
 export class AppController {
   private readonly appRoot: HTMLDivElement;
   private readonly sceneController: SceneController;
   private readonly urdfLoadService: UrdfLoadService;
   private readonly csvMotionService: CsvMotionService;
+  private readonly mimicKitMotionService: MimicKitMotionService;
   private readonly bvhMotionService: BvhMotionService;
   private readonly smplMotionService: SmplMotionService;
   private readonly objLoadService: ObjLoadService;
@@ -604,7 +914,7 @@ export class AppController {
       }
     | null = null;
   private currentObjFileMap: DroppedFileMap | null = null;
-  private currentMotionKind: 'csv' | 'bvh' | 'smpl' | null = null;
+  private currentMotionKind: ViewerMotionKind | null = null;
   private currentMotionSourcePath: string | null = null;
   private motionWarnings: string[] = [];
   private motionFrameSnapshot: MotionFrameSnapshot | null = null;
@@ -626,10 +936,15 @@ export class AppController {
   private presetManifest: ViewerPresetManifest | null = null;
   private presetUrdfCatalog: PresetAssetFile[] = [];
   private presetSmplModelCatalog: PresetAssetFile[] = [];
+  private presetModelCatalog: SelectableModelOption[] = [];
+  private presetMotionCatalog: SelectableMotionOption[] = [];
   private capturedObjCatalog: PresetAssetFile[] = buildDefaultCapturedObjectPresetFiles();
   private droppedUrdfFileMap: DroppedFileMap = new Map();
   private droppedSmplModelFileMap: DroppedFileMap = new Map();
   private droppedCapturedObjFileMap: DroppedFileMap = new Map();
+  private selectedModelOptionKey: string | null = null;
+  private selectedMotionOptionKey: string | null = null;
+  private selectedCapturedObjPath: string | null = null;
   private isPresetLoading = false;
   private isObjCatalogLoading = false;
 
@@ -712,30 +1027,28 @@ export class AppController {
 
   private readonly onPresetSelectChange = (): void => {
     this.syncPresetControls();
-    const presetId = this.presetSelect.value;
-    if (!presetId || this.isPresetLoading) {
+    const motionKey = this.presetSelect.value;
+    this.selectedMotionOptionKey = motionKey || null;
+    if (!motionKey || this.isPresetLoading) {
       return;
     }
 
-    void this.loadPresetById(presetId);
+    void this.loadMotionOptionByKey(motionKey);
   };
 
   private readonly onPresetLoadClick = (): void => {
-    const presetId = this.presetSelect.value;
-    if (!presetId || this.isPresetLoading) {
+    const motionKey = this.presetSelect.value;
+    if (!motionKey || this.isPresetLoading) {
       return;
     }
 
-    void this.loadPresetById(presetId);
+    void this.loadMotionOptionByKey(motionKey);
   };
 
   private readonly onObjSelectChange = (): void => {
     const selectedObjPath = this.objSelect.value;
-    if (!selectedObjPath || this.isPresetLoading || this.isObjCatalogLoading) {
-      return;
-    }
-
-    void this.loadCapturedObjByMapPath(selectedObjPath);
+    this.selectedCapturedObjPath = selectedObjPath ? normalizePath(selectedObjPath) : '';
+    this.syncObjSelectionToCurrentModel();
   };
 
   private readonly onShowVisualClick = (): void => {
@@ -799,12 +1112,19 @@ export class AppController {
       return;
     }
 
-    const urdfPath = this.urdfSelect.value;
-    if (!urdfPath || urdfPath === this.selectedUrdfPath) {
+    const modelKey = this.urdfSelect.value;
+    if (!modelKey) {
+      this.selectedModelOptionKey = null;
+      this.selectedMotionOptionKey = null;
+      this.renderUrdfList();
       return;
     }
 
-    void this.loadSelectedUrdf(urdfPath);
+    if (modelKey === this.getCurrentModelOptionKey()) {
+      return;
+    }
+
+    void this.loadModelOptionByKey(modelKey);
   };
 
   private readonly onSmplModelSelectChange = (): void => {
@@ -818,6 +1138,7 @@ export class AppController {
       return;
     }
 
+    this.selectedModelOptionKey = `smpl:${normalizePath(smplModelPath)}`;
     void this.loadSelectedSmplModel(smplModelPath);
   };
 
@@ -861,8 +1182,8 @@ export class AppController {
       return;
     }
 
-    if (this.currentMotionKind === 'csv' && this.currentMotionClip) {
-      this.applyCsvMotionFps(rawFps);
+    if (isUrdfMotionKind(this.currentMotionKind) && this.currentMotionClip) {
+      this.applyUrdfMotionFps(rawFps);
       return;
     }
     if (this.currentMotionKind === 'bvh' && this.currentBvhMotion) {
@@ -927,6 +1248,7 @@ export class AppController {
 
     this.urdfLoadService = new UrdfLoadService();
     this.csvMotionService = new CsvMotionService();
+    this.mimicKitMotionService = new MimicKitMotionService();
     this.bvhMotionService = new BvhMotionService();
     this.smplMotionService = new SmplMotionService();
     this.objLoadService = new ObjLoadService();
@@ -1053,6 +1375,9 @@ export class AppController {
     this.droppedFileMap = null;
     this.availableUrdfPaths = this.getMergedUrdfModelPaths();
     this.selectedUrdfPath = null;
+    this.selectedModelOptionKey = null;
+    this.selectedMotionOptionKey = null;
+    this.selectedCapturedObjPath = null;
     this.lastLoadResult = null;
     this.sceneWarning = null;
     this.recoverableDropHint = null;
@@ -1065,7 +1390,9 @@ export class AppController {
     this.clearMotionPlayback();
     this.clearCurrentObjState();
     this.renderUrdfList();
+    this.renderPresetOptions();
     this.renderSmplModelList();
+    this.renderObjOptions();
     this.setState('idle');
   }
 
@@ -1147,6 +1474,12 @@ export class AppController {
     const bvhPaths = this.bvhMotionService.getAvailableBvhPaths(fileMap);
     if (bvhPaths.length > 0) {
       await this.loadBvhMotionFromDroppedFiles(fileMap);
+      return;
+    }
+
+    const mimickitPaths = this.mimicKitMotionService.getAvailablePklPaths(fileMap);
+    if (mimickitPaths.length > 0) {
+      await this.loadMimicKitMotionFromDroppedFiles(fileMap);
       return;
     }
 
@@ -1233,6 +1566,8 @@ export class AppController {
     this.sceneController.setModelUpAxis('+Z');
     this.sceneController.setVisualProfile('default');
     this.selectedUrdfPath = normalizedUrdfPath;
+    this.selectedModelOptionKey = `urdf:${normalizedUrdfPath}`;
+    this.selectedMotionOptionKey = null;
     this.renderUrdfList();
     this.sceneController.clearRobot();
     this.clearMotionPlayback();
@@ -1257,6 +1592,7 @@ export class AppController {
       this.motionPlayer.attachRobot(result.robot);
       this.lastLoadResult = result;
       this.selectedUrdfPath = result.selectedUrdfPath;
+      this.selectedModelOptionKey = `urdf:${result.selectedUrdfPath}`;
       this.recoverableDropHint = null;
       this.renderUrdfList();
       this.renderReadyState(result);
@@ -1306,6 +1642,42 @@ export class AppController {
     }
   }
 
+  private applyLoadedUrdfMotion(
+    loadedRobotResult: LoadedRobotResult,
+    clip: MotionClip,
+    motionKind: UrdfMotionKind,
+    sourcePath: string,
+    warnings: string[],
+  ): void {
+    this.bvhMotionPlayer.load(null, null);
+    this.motionPlayer.attachRobot(loadedRobotResult.robot);
+    const bindingReport = this.motionPlayer.loadClip(clip);
+    this.sceneController.syncGroundToCurrentRobot();
+
+    this.currentMotionClip = clip;
+    this.currentBvhMotion = null;
+    this.currentBvhFileMap = null;
+    this.currentMotionKind = motionKind;
+    this.currentMotionSourcePath = sourcePath;
+    this.motionWarnings = [...warnings];
+    if (bindingReport.missingRootJoint) {
+      this.motionWarnings.push(
+        `Joint "${clip.schema.rootJointName}" was not found. Root translation/rotation is ignored.`,
+      );
+    }
+
+    this.motionFrameSnapshot = {
+      frameIndex: 0,
+      frameCount: clip.frameCount,
+      fps: clip.fps,
+      timeSeconds: 0,
+    };
+    this.playActiveMotion();
+    this.syncMotionControls();
+    this.recoverableDropHint = null;
+    this.renderReadyState(loadedRobotResult);
+  }
+
   private async loadMotionFromDroppedFiles(
     fileMap: DroppedFileMap,
     preferredCsvPath?: string,
@@ -1330,33 +1702,53 @@ export class AppController {
         loadedRobotResult.motionSchema,
         preferredCsvPath,
       );
-      this.bvhMotionPlayer.load(null, null);
-      this.motionPlayer.attachRobot(loadedRobotResult.robot);
-      const bindingReport = this.motionPlayer.loadClip(result.clip);
-      this.sceneController.syncGroundToCurrentRobot();
+      this.applyLoadedUrdfMotion(
+        loadedRobotResult,
+        result.clip,
+        'csv',
+        result.selectedCsvPath,
+        result.warnings,
+      );
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.setState('error', {
+        title: 'Motion Load Failed',
+        detail: reason,
+      });
+    }
+  }
 
-      this.currentMotionClip = result.clip;
-      this.currentBvhMotion = null;
-      this.currentBvhFileMap = null;
-      this.currentMotionKind = 'csv';
-      this.currentMotionSourcePath = result.selectedCsvPath;
-      this.motionWarnings = [...result.warnings];
-      if (bindingReport.missingRootJoint) {
-        this.motionWarnings.push(
-          `Joint "${result.clip.schema.rootJointName}" was not found. Root translation/rotation is ignored.`,
-        );
-      }
+  private async loadMimicKitMotionFromDroppedFiles(
+    fileMap: DroppedFileMap,
+    preferredMotionPath?: string,
+  ): Promise<void> {
+    const loadedRobotResult = this.lastLoadResult;
+    if (!loadedRobotResult) {
+      this.showRecoverableDropError(
+        'URDF Required For MimicKit',
+        'Load a URDF robot first, then drop MimicKit motion PKL.',
+        'MimicKit motion-only drop needs an active URDF robot.',
+      );
+      return;
+    }
 
-      this.motionFrameSnapshot = {
-        frameIndex: 0,
-        frameCount: result.clip.frameCount,
-        fps: result.clip.fps,
-        timeSeconds: 0,
-      };
-      this.playActiveMotion();
-      this.syncMotionControls();
-      this.recoverableDropHint = null;
-      this.renderReadyState(loadedRobotResult);
+    this.setState('loading', {
+      detail: 'Loading MimicKit motion PKL ...',
+    });
+
+    try {
+      const result = await this.mimicKitMotionService.loadFromDroppedFiles(
+        fileMap,
+        loadedRobotResult.motionSchema,
+        preferredMotionPath,
+      );
+      this.applyLoadedUrdfMotion(
+        loadedRobotResult,
+        result.clip,
+        'mimickit',
+        result.selectedMotionPath,
+        result.warnings,
+      );
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       this.setState('error', {
@@ -1387,8 +1779,11 @@ export class AppController {
       this.droppedFileMap = null;
       this.availableUrdfPaths = this.getMergedUrdfModelPaths();
       this.selectedUrdfPath = null;
+      this.selectedModelOptionKey = null;
+      this.selectedMotionOptionKey = null;
       this.urdfLoadService.dispose();
       this.renderUrdfList();
+      this.renderPresetOptions();
 
       this.sceneController.clearRobot();
       this.sceneController.setModelUpAxis('+Y');
@@ -1409,6 +1804,7 @@ export class AppController {
       };
       this.currentBvhFileMap = fileMap;
       this.bvhLinearUnit = result.linearUnit;
+      this.selectedModelOptionKey = BVH_PREVIEW_MODEL_KEY;
       this.currentMotionKind = 'bvh';
       this.currentMotionSourcePath = result.selectedBvhPath;
       this.motionWarnings = [...result.warnings];
@@ -1525,7 +1921,9 @@ export class AppController {
         result.availableModelPaths,
       );
       this.selectedSmplModelPath = result.selectedModelPath;
+      this.selectedModelOptionKey = `smpl:${result.selectedModelPath}`;
       this.renderSmplModelList();
+      this.renderUrdfList();
       this.currentMotionKind = 'smpl';
       this.currentMotionSourcePath = result.selectedMotionPath;
       this.motionWarnings = [...result.warnings, ...objectWarnings];
@@ -1601,7 +1999,9 @@ export class AppController {
         result.availableModelPaths,
       );
       this.selectedSmplModelPath = result.selectedModelPath;
+      this.selectedModelOptionKey = `smpl:${result.selectedModelPath}`;
       this.renderSmplModelList();
+      this.renderUrdfList();
       this.currentMotionKind = null;
       this.currentMotionSourcePath = null;
       this.motionWarnings = hadActiveObj
@@ -1684,6 +2084,14 @@ export class AppController {
       return { result, warnings };
     }
 
+    if (this.selectedCapturedObjPath) {
+      const selectedLoad = await this.loadSelectedCapturedObjForSmplScene(this.selectedCapturedObjPath);
+      warnings.push(...selectedLoad.warnings);
+      if (selectedLoad.result) {
+        return { result: selectedLoad.result, warnings };
+      }
+    }
+
     const desiredObjectName = normalizeObjectToken(motionObjectName ?? '');
     if (!desiredObjectName) {
       return { result: null, warnings };
@@ -1692,6 +2100,42 @@ export class AppController {
     const autoLoad = await this.loadCapturedObjForMotionObjectName(desiredObjectName);
     warnings.push(...autoLoad.warnings);
     return { result: autoLoad.result, warnings };
+  }
+
+  private async loadSelectedCapturedObjForSmplScene(
+    objectPath: string,
+  ): Promise<{ result: ObjModelLoadResult | null; warnings: string[] }> {
+    const warnings: string[] = [];
+    const normalizedPath = normalizePath(objectPath);
+    if (!normalizedPath) {
+      return { result: null, warnings };
+    }
+
+    const selectedObj = this.getCapturedObjCatalogEntries().find(
+      (candidate) => candidate.mapAs === normalizedPath,
+    );
+    if (!selectedObj) {
+      warnings.push(`Selected object "${objectPath}" is no longer available in the catalog.`);
+      return { result: null, warnings };
+    }
+
+    try {
+      const resolved = await this.resolveCapturedObjSource(selectedObj);
+      const result = await this.objLoadService.loadFromDroppedFiles(
+        resolved.fileMap,
+        resolved.preferredObjPath,
+        {
+          normalizeToGround: false,
+        },
+      );
+      this.setCurrentObjState(resolved.fileMap, result);
+      warnings.push(...result.warnings);
+      return { result, warnings };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      warnings.push(`Failed to load selected object "${objectPath}": ${reason}`);
+      return { result: null, warnings };
+    }
   }
 
   private async loadCapturedObjForMotionObjectName(
@@ -1811,18 +2255,24 @@ export class AppController {
   }
 
   private syncObjSelectionToCurrentModel(): void {
-    if (!this.currentObjModel) {
-      this.objSelect.value = '';
+    if (this.selectedCapturedObjPath !== null) {
+      const selectedPath = normalizePath(this.selectedCapturedObjPath);
+      if (
+        selectedPath &&
+        this.getCapturedObjCatalogEntries().some((candidate) => candidate.mapAs === selectedPath)
+      ) {
+        this.objSelect.value = selectedPath;
+      } else {
+        this.objSelect.value = '';
+      }
       return;
     }
 
-    const modelPath = normalizePath(this.currentObjModel.modelSourcePath);
-    if (!modelPath) {
-      this.objSelect.value = '';
-      return;
-    }
-
-    if (this.getCapturedObjCatalogEntries().some((candidate) => candidate.mapAs === modelPath)) {
+    const modelPath = normalizePath(this.currentObjModel?.modelSourcePath ?? '');
+    if (
+      modelPath &&
+      this.getCapturedObjCatalogEntries().some((candidate) => candidate.mapAs === modelPath)
+    ) {
       this.objSelect.value = modelPath;
       return;
     }
@@ -1842,6 +2292,309 @@ export class AppController {
     );
     const presetModelPaths = this.presetSmplModelCatalog.map((model) => model.mapAs);
     return mergeUniquePaths(presetModelPaths, droppedModelPaths);
+  }
+
+  private getAvailableModelOptions(): SelectableModelOption[] {
+    const options = new Map<string, SelectableModelOption>();
+
+    for (const option of this.presetModelCatalog) {
+      options.set(option.key, option);
+    }
+
+    for (const urdfPath of this.urdfLoadService.getAvailableUrdfPaths(this.droppedUrdfFileMap)) {
+      const normalizedPath = normalizePath(urdfPath);
+      if (!normalizedPath) {
+        continue;
+      }
+
+      options.set(`urdf:${normalizedPath}`, {
+        key: `urdf:${normalizedPath}`,
+        label: formatSelectableModelLabel('urdf', normalizedPath),
+        kind: 'urdf',
+        path: normalizedPath,
+        bindingTag: inferModelBindingTag('urdf', normalizedPath),
+        source: 'dropped',
+      });
+    }
+
+    for (const smplPath of [...this.droppedSmplModelFileMap.keys()]) {
+      const normalizedPath = normalizePath(smplPath);
+      if (!normalizedPath || !isSmplModelPath(normalizedPath)) {
+        continue;
+      }
+
+      options.set(`smpl:${normalizedPath}`, {
+        key: `smpl:${normalizedPath}`,
+        label: formatSelectableModelLabel('smpl', normalizedPath),
+        kind: 'smpl',
+        path: normalizedPath,
+        bindingTag: inferModelBindingTag('smpl', normalizedPath),
+        source: 'dropped',
+      });
+    }
+
+    if (
+      (this.currentMotionKind === 'bvh' || this.presetMotionCatalog.some((option) => option.kind === 'bvh')) &&
+      !options.has(BVH_PREVIEW_MODEL_KEY)
+    ) {
+      options.set(BVH_PREVIEW_MODEL_KEY, {
+        key: BVH_PREVIEW_MODEL_KEY,
+        label: 'BVH Preview',
+        kind: 'bvh',
+        path: BVH_PREVIEW_MODEL_KEY,
+        bindingTag: 'bvh',
+        source: 'builtin',
+        description: 'Built-in BVH preview skeleton.',
+      });
+    }
+
+    return [...options.values()].sort((left, right) => left.label.localeCompare(right.label));
+  }
+
+  private getCurrentModelOptionKey(options = this.getAvailableModelOptions()): string | null {
+    if (this.selectedModelOptionKey && options.some((option) => option.key === this.selectedModelOptionKey)) {
+      return this.selectedModelOptionKey;
+    }
+
+    const normalizedUrdfPath = normalizePath(this.selectedUrdfPath ?? '');
+    if (normalizedUrdfPath) {
+      const urdfKey = `urdf:${normalizedUrdfPath}`;
+      if (options.some((option) => option.key === urdfKey)) {
+        return urdfKey;
+      }
+    }
+
+    const normalizedSmplPath = normalizePath(
+      this.selectedSmplModelPath ??
+        this.currentSmplMotion?.modelSourcePath ??
+        this.currentSmplModel?.modelSourcePath ??
+        '',
+    );
+    if (normalizedSmplPath) {
+      const smplKey = `smpl:${normalizedSmplPath}`;
+      if (options.some((option) => option.key === smplKey)) {
+        return smplKey;
+      }
+    }
+
+    if (
+      this.currentMotionKind === 'bvh' &&
+      options.some((option) => option.key === BVH_PREVIEW_MODEL_KEY)
+    ) {
+      return BVH_PREVIEW_MODEL_KEY;
+    }
+
+    return null;
+  }
+
+  private getCurrentModelOption(): SelectableModelOption | null {
+    const options = this.getAvailableModelOptions();
+    const currentKey = this.getCurrentModelOptionKey(options);
+    return options.find((option) => option.key === currentKey) ?? null;
+  }
+
+  private isMotionCompatibleWithModel(
+    motionOption: SelectableMotionOption,
+    modelOption: SelectableModelOption,
+  ): boolean {
+    if (modelOption.kind === 'bvh') {
+      return motionOption.kind === 'bvh';
+    }
+
+    if (modelOption.kind === 'smpl') {
+      if (motionOption.kind !== 'smpl' || !modelOption.bindingTag) {
+        return false;
+      }
+      return motionOption.bindingTags.includes(modelOption.bindingTag);
+    }
+
+    if ((motionOption.kind !== 'csv' && motionOption.kind !== 'mimickit') || !modelOption.bindingTag) {
+      return false;
+    }
+
+    return motionOption.bindingTags.includes(modelOption.bindingTag);
+  }
+
+  private getCompatibleMotionOptions(
+    modelOption: SelectableModelOption | null = this.getCurrentModelOption(),
+  ): SelectableMotionOption[] {
+    if (!modelOption) {
+      return [];
+    }
+
+    return this.presetMotionCatalog.filter((option) =>
+      this.isMotionCompatibleWithModel(option, modelOption),
+    );
+  }
+
+  private getCurrentMotionOptionKey(
+    motionOptions = this.getCompatibleMotionOptions(),
+  ): string | null {
+    if (
+      this.selectedMotionOptionKey &&
+      motionOptions.some((option) => option.key === this.selectedMotionOptionKey)
+    ) {
+      return this.selectedMotionOptionKey;
+    }
+
+    const normalizedMotionPath = normalizePath(this.currentMotionSourcePath ?? '');
+    if (!normalizedMotionPath || !this.currentMotionKind) {
+      return null;
+    }
+
+    const motionKey = `${this.currentMotionKind}:${normalizedMotionPath}`;
+    return motionOptions.some((option) => option.key === motionKey) ? motionKey : null;
+  }
+
+  private async loadModelOptionByKey(modelKey: string): Promise<void> {
+    const modelOption =
+      this.getAvailableModelOptions().find((option) => option.key === modelKey) ?? null;
+    if (!modelOption) {
+      this.setState('error', {
+        title: 'Model Not Found',
+        detail: `Model "${modelKey}" is not available.`,
+      });
+      return;
+    }
+
+    if (this.isPresetLoading) {
+      return;
+    }
+
+    this.selectedModelOptionKey = modelOption.key;
+    this.selectedMotionOptionKey = null;
+    this.renderUrdfList();
+    this.renderPresetOptions();
+    this.renderObjOptions();
+
+    if (modelOption.kind === 'bvh') {
+      this.lastLoadResult = null;
+      this.sceneWarning = null;
+      this.droppedFileMap = null;
+      this.availableUrdfPaths = this.getMergedUrdfModelPaths();
+      this.selectedUrdfPath = null;
+      this.urdfLoadService.dispose();
+      this.sceneController.clearRobot();
+      this.sceneController.setModelUpAxis('+Y');
+      this.sceneController.setVisualProfile('default');
+      this.sceneController.resetView();
+      this.motionPlayer.attachRobot(null);
+      this.clearMotionPlayback();
+      this.clearCurrentObjState();
+      this.selectedModelOptionKey = BVH_PREVIEW_MODEL_KEY;
+      this.renderUrdfList();
+      this.renderPresetOptions();
+      this.renderSmplModelList();
+      this.renderObjOptions();
+      this.setState('idle', {
+        title: 'BVH Preview Selected',
+        detail: 'Select a BVH motion to load.',
+        dropHint: 'Choose a BVH motion from the motions list, or drag and drop a BVH file.',
+      });
+      return;
+    }
+
+    this.isPresetLoading = true;
+    this.syncPresetControls();
+    this.setState('loading', {
+      detail: `Loading ${modelOption.label} ...`,
+    });
+
+    try {
+      if (modelOption.kind === 'urdf') {
+        if (modelOption.files && modelOption.files.length > 0) {
+          const modelFileMap = await this.fetchPresetFileMap(modelOption.files);
+          this.registerDroppedUrdfFiles(modelFileMap);
+        }
+
+        this.availableUrdfPaths = this.getMergedUrdfModelPaths();
+        this.selectedUrdfPath = modelOption.path;
+        this.renderUrdfList();
+        await this.loadSelectedUrdf(modelOption.path);
+      } else {
+        const modelFileMap =
+          modelOption.files && modelOption.files.length > 0
+            ? await this.fetchPresetFileMap(modelOption.files)
+            : await this.resolveSmplModelFileMap(modelOption.path);
+        this.registerDroppedSmplModels(modelFileMap, [modelOption.path]);
+        await this.loadSmplModelFromDroppedFiles(modelFileMap, modelOption.path);
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.setState('error', {
+        title: 'Model Load Failed',
+        detail: reason,
+      });
+    } finally {
+      this.isPresetLoading = false;
+      this.renderUrdfList();
+      this.renderPresetOptions();
+      this.renderObjOptions();
+      this.syncPresetControls();
+    }
+  }
+
+  private async loadMotionOptionByKey(motionKey: string): Promise<void> {
+    const modelOption = this.getCurrentModelOption();
+    if (!modelOption) {
+      this.setState('error', {
+        title: 'Model Required',
+        detail: 'Select a model first, then choose a compatible motion.',
+      });
+      return;
+    }
+
+    const motionOption =
+      this.getCompatibleMotionOptions(modelOption).find((option) => option.key === motionKey) ?? null;
+    if (!motionOption) {
+      this.setState('error', {
+        title: 'Motion Not Available',
+        detail: `Motion "${motionKey}" is not compatible with the selected model.`,
+      });
+      return;
+    }
+
+    if (this.isPresetLoading) {
+      return;
+    }
+
+    this.selectedMotionOptionKey = motionOption.key;
+    this.isPresetLoading = true;
+    this.syncPresetControls();
+    this.setState('loading', {
+      detail: `Loading ${motionOption.label} ...`,
+    });
+
+    try {
+      const motionFileMap = await this.fetchPresetFileMap(motionOption.files);
+      if (motionOption.kind === 'csv') {
+        await this.loadMotionFromDroppedFiles(motionFileMap, motionOption.selectedMotionPath);
+      } else if (motionOption.kind === 'mimickit') {
+        await this.loadMimicKitMotionFromDroppedFiles(motionFileMap, motionOption.selectedMotionPath);
+      } else if (motionOption.kind === 'bvh') {
+        await this.loadBvhMotionFromDroppedFiles(motionFileMap, motionOption.selectedMotionPath);
+      } else {
+        const modelFileMap = await this.resolveSmplModelFileMap(modelOption.path);
+        const mergedFileMap = this.smplMotionService.mergeDroppedFileMaps(modelFileMap, motionFileMap);
+        await this.loadSmplMotionFromDroppedFiles(
+          mergedFileMap,
+          modelOption.path,
+          motionOption.selectedMotionPath,
+        );
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.setState('error', {
+        title: 'Motion Load Failed',
+        detail: reason,
+      });
+    } finally {
+      this.isPresetLoading = false;
+      this.renderUrdfList();
+      this.renderPresetOptions();
+      this.renderObjOptions();
+      this.syncPresetControls();
+    }
   }
 
   private registerDroppedUrdfFiles(fileMap: DroppedFileMap): void {
@@ -2084,14 +2837,14 @@ export class AppController {
 
   private hasAnyMotion(): boolean {
     return (
-      this.currentMotionKind === 'csv' ||
+      isUrdfMotionKind(this.currentMotionKind) ||
       this.currentMotionKind === 'bvh' ||
       this.currentMotionKind === 'smpl'
     );
   }
 
   private playActiveMotion(): void {
-    if (this.currentMotionKind === 'csv') {
+    if (isUrdfMotionKind(this.currentMotionKind)) {
       this.motionPlayer.play();
       return;
     }
@@ -2105,7 +2858,7 @@ export class AppController {
   }
 
   private pauseActiveMotion(): void {
-    if (this.currentMotionKind === 'csv') {
+    if (isUrdfMotionKind(this.currentMotionKind)) {
       this.motionPlayer.pause();
       return;
     }
@@ -2120,7 +2873,7 @@ export class AppController {
 
   private resetActiveMotion(): void {
     let resetApplied = false;
-    if (this.currentMotionKind === 'csv') {
+    if (isUrdfMotionKind(this.currentMotionKind)) {
       this.motionPlayer.reset();
       resetApplied = true;
     } else if (this.currentMotionKind === 'bvh') {
@@ -2140,7 +2893,7 @@ export class AppController {
   }
 
   private seekActiveMotion(frameIndex: number): void {
-    if (this.currentMotionKind === 'csv') {
+    if (isUrdfMotionKind(this.currentMotionKind)) {
       this.motionPlayer.seek(frameIndex);
       return;
     }
@@ -2586,8 +3339,8 @@ export class AppController {
     this.modePropsList.hidden = false;
   }
 
-  private applyCsvMotionFps(nextFps: number): void {
-    if (this.currentMotionKind !== 'csv' || !this.currentMotionClip) {
+  private applyUrdfMotionFps(nextFps: number): void {
+    if (!isUrdfMotionKind(this.currentMotionKind) || !this.currentMotionClip) {
       return;
     }
 
@@ -2634,6 +3387,12 @@ export class AppController {
     if (this.currentMotionKind === 'csv') {
       return this.currentMotionSourcePath
         ? this.formatAssetFileLabel(this.currentMotionSourcePath, 'motion.csv')
+        : null;
+    }
+
+    if (this.currentMotionKind === 'mimickit') {
+      return this.currentMotionSourcePath
+        ? this.formatAssetFileLabel(this.currentMotionSourcePath, 'motion.pkl')
         : null;
     }
 
@@ -2752,40 +3511,55 @@ export class AppController {
   }
 
   private renderPresetOptions(): void {
-    const previousValue = this.presetSelect.value;
-    const presets = this.presetManifest?.presets ?? [];
-    const hasPresets = presets.length > 0;
+    const motionOptions = this.getCompatibleMotionOptions();
+    const selectedMotionKey = this.getCurrentMotionOptionKey(motionOptions);
+    const modelOption = this.getCurrentModelOption();
 
     this.presetSelect.innerHTML = '';
     const placeholder = document.createElement('option');
     placeholder.value = '';
-    placeholder.textContent = hasPresets ? 'Select a preset...' : 'No bundled presets';
+    if (!modelOption) {
+      placeholder.textContent = 'Select model first';
+    } else if (motionOptions.length === 0) {
+      placeholder.textContent = 'No compatible motions';
+    } else {
+      placeholder.textContent = 'Select motion...';
+    }
     this.presetSelect.appendChild(placeholder);
 
-    for (const preset of presets) {
+    for (const preset of motionOptions) {
       const option = document.createElement('option');
-      option.value = preset.id;
+      option.value = preset.key;
       option.textContent = preset.label;
       option.title = preset.description || preset.label;
       this.presetSelect.appendChild(option);
     }
 
-    if (hasPresets && presets.some((preset) => preset.id === previousValue)) {
-      this.presetSelect.value = previousValue;
+    if (selectedMotionKey && motionOptions.some((option) => option.key === selectedMotionKey)) {
+      this.presetSelect.value = selectedMotionKey;
     } else {
       this.presetSelect.value = '';
     }
   }
 
   private renderObjOptions(): void {
-    const previousValue = this.objSelect.value;
     const catalog = this.getCapturedObjCatalogEntries();
     const hasCatalog = catalog.length > 0;
+    const modelOption = this.getCurrentModelOption();
+    const supportsObjects = modelOption?.kind === 'smpl';
 
     this.objSelect.innerHTML = '';
     const placeholder = document.createElement('option');
     placeholder.value = '';
-    placeholder.textContent = hasCatalog ? 'Select object...' : 'No objects available';
+    if (!modelOption) {
+      placeholder.textContent = 'Select model first';
+    } else if (!supportsObjects) {
+      placeholder.textContent = 'Objects are for SMPL';
+    } else if (hasCatalog) {
+      placeholder.textContent = 'No object';
+    } else {
+      placeholder.textContent = 'No objects available';
+    }
     this.objSelect.appendChild(placeholder);
 
     for (const candidate of catalog) {
@@ -2796,20 +3570,14 @@ export class AppController {
       this.objSelect.appendChild(option);
     }
 
-    if (hasCatalog && catalog.some((candidate) => candidate.mapAs === previousValue)) {
-      this.objSelect.value = previousValue;
-      return;
-    }
-
     this.syncObjSelectionToCurrentModel();
   }
 
   private syncPresetControls(): void {
-    const presets = this.presetManifest?.presets ?? [];
-    const hasPresets = presets.length > 0;
+    const hasMotionOptions = this.getCompatibleMotionOptions().length > 0;
     const hasSelection = this.presetSelect.value.trim().length > 0;
 
-    this.presetSelect.disabled = this.isPresetLoading || !hasPresets;
+    this.presetSelect.disabled = this.isPresetLoading || !hasMotionOptions;
     this.presetLoadButton.disabled = this.isPresetLoading || !hasSelection;
     this.presetLoadButton.textContent = this.isPresetLoading ? 'Loading...' : 'Load Preset';
     this.syncObjControls();
@@ -2817,13 +3585,17 @@ export class AppController {
 
   private syncObjControls(): void {
     const hasCatalog = this.getCapturedObjCatalogEntries().length > 0;
-    this.objSelect.disabled = this.isPresetLoading || this.isObjCatalogLoading || !hasCatalog;
+    const supportsObjects = this.getCurrentModelOption()?.kind === 'smpl';
+    this.objSelect.disabled =
+      this.isPresetLoading || this.isObjCatalogLoading || !hasCatalog || !supportsObjects;
   }
 
   private async initializePresetManifest(): Promise<void> {
     this.presetManifest = null;
     this.presetUrdfCatalog = [];
     this.presetSmplModelCatalog = [];
+    this.presetModelCatalog = [];
+    this.presetMotionCatalog = [];
     this.capturedObjCatalog = buildDefaultCapturedObjectPresetFiles();
     this.availableUrdfPaths = this.getMergedUrdfModelPaths();
     this.availableSmplModelPaths = this.getMergedSmplModelPaths();
@@ -2846,6 +3618,8 @@ export class AppController {
       this.presetManifest = parsedManifest;
       this.presetUrdfCatalog = collectPresetUrdfModels(parsedManifest);
       this.presetSmplModelCatalog = collectPresetSmplModels(parsedManifest);
+      this.presetModelCatalog = collectPresetModelOptions(parsedManifest);
+      this.presetMotionCatalog = collectPresetMotionOptions(parsedManifest);
       this.capturedObjCatalog =
         parsedManifest.capturedObjects.length > 0
           ? parsedManifest.capturedObjects
@@ -2856,6 +3630,8 @@ export class AppController {
       this.presetManifest = { presets: [], capturedObjects: [] };
       this.presetUrdfCatalog = [];
       this.presetSmplModelCatalog = [];
+      this.presetModelCatalog = [];
+      this.presetMotionCatalog = [];
       this.capturedObjCatalog = buildDefaultCapturedObjectPresetFiles();
     }
 
@@ -3113,6 +3889,16 @@ export class AppController {
           ) {
             throw new Error(`Failed to load CSV motion for preset "${preset.label}".`);
           }
+        } else if (preset.motion.kind === 'mimickit') {
+          await this.loadMimicKitMotionFromDroppedFiles(motionFileMap, preferredMotionPath);
+
+          if (
+            this.currentMotionKind !== 'mimickit' ||
+            !this.currentMotionSourcePath ||
+            !motionFileMap.has(this.currentMotionSourcePath)
+          ) {
+            throw new Error(`Failed to load MimicKit motion for preset "${preset.label}".`);
+          }
         } else {
           await this.loadBvhMotionFromDroppedFiles(motionFileMap, preferredMotionPath);
 
@@ -3131,7 +3917,7 @@ export class AppController {
         title: 'Preset Load Failed',
         detail: reason,
         dropHint:
-          'Choose another preset, or drag URDF/CSV/BVH/SMPL model NPZ|PKL + motion NPZ/OBJ files to continue.',
+          'Choose another preset, or drag URDF/CSV/MimicKit PKL/BVH/SMPL model NPZ|PKL + motion NPZ/OBJ files to continue.',
       });
     } finally {
       this.isPresetLoading = false;
@@ -3140,32 +3926,33 @@ export class AppController {
   }
 
   private renderUrdfList(): void {
-    const previousValue = this.urdfSelect.value;
-    const hasModels = this.availableUrdfPaths.length > 0;
+    const modelOptions = this.getAvailableModelOptions();
+    const selectedModelKey = this.getCurrentModelOptionKey(modelOptions);
 
     this.urdfSelect.innerHTML = '';
     const placeholder = document.createElement('option');
     placeholder.value = '';
-    placeholder.textContent = hasModels ? 'Select URDF model...' : 'No URDF model loaded';
+    placeholder.textContent = modelOptions.length > 0 ? 'Select model...' : 'No models available';
     this.urdfSelect.appendChild(placeholder);
 
-    for (const urdfPath of this.availableUrdfPaths) {
+    for (const modelOption of modelOptions) {
       const option = document.createElement('option');
-      option.value = urdfPath;
-      option.textContent = getBaseName(urdfPath) || urdfPath;
-      option.title = urdfPath;
+      option.value = modelOption.key;
+      option.textContent = modelOption.label;
+      option.title = modelOption.description || modelOption.path;
       this.urdfSelect.appendChild(option);
     }
 
-    if (this.selectedUrdfPath && this.availableUrdfPaths.includes(this.selectedUrdfPath)) {
-      this.urdfSelect.value = this.selectedUrdfPath;
-    } else if (this.availableUrdfPaths.includes(previousValue)) {
-      this.urdfSelect.value = previousValue;
+    if (selectedModelKey && modelOptions.some((option) => option.key === selectedModelKey)) {
+      this.urdfSelect.value = selectedModelKey;
     } else {
       this.urdfSelect.value = '';
     }
 
-    this.urdfSelect.disabled = this.availableUrdfPaths.length === 0;
+    this.urdfSelect.disabled = this.isPresetLoading || modelOptions.length === 0;
+    this.renderPresetOptions();
+    this.renderObjOptions();
+    this.syncPresetControls();
   }
 
   private renderSmplModelList(): void {

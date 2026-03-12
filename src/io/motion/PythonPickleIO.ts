@@ -1,9 +1,11 @@
 import { Parser } from 'pickleparser';
 
-interface SmplTensorFloat64 {
+export interface ParsedPickleNdarrayFloat64 {
   shape: number[];
   values: Float64Array;
 }
+
+interface SmplTensorFloat64 extends ParsedPickleNdarrayFloat64 {}
 
 interface SmplTensorInt32 {
   shape: number[];
@@ -264,7 +266,7 @@ function decodeNdarrayValues(
   return values;
 }
 
-function parseWithPickleparser(buffer: ArrayBuffer): unknown {
+export function parsePythonPickleBuffer(buffer: ArrayBuffer): unknown {
   const parser = new Parser({
     unpicklingTypeOfSet: 'array',
     unpicklingTypeOfDictionary: 'object',
@@ -332,7 +334,7 @@ function toRawBytesFromPickleparser(value: unknown): Uint8Array {
 
 function parseNdarrayFromPickleparser(value: unknown, label: string): SmplTensorFloat64 {
   if (!isRecord(value)) {
-    throw new Error(`${label} is not a numpy ndarray in SMPL PKL.`);
+    throw new Error(`${label} is not a numpy ndarray in Python pickle.`);
   }
 
   const shapeRaw = value['1'];
@@ -341,7 +343,7 @@ function parseNdarrayFromPickleparser(value: unknown, label: string): SmplTensor
   const dataRaw = value['4'];
 
   if (!Array.isArray(shapeRaw) || dtypeRaw === undefined || dataRaw === undefined) {
-    throw new Error(`${label} is not a numpy ndarray in SMPL PKL.`);
+    throw new Error(`${label} is not a numpy ndarray in Python pickle.`);
   }
 
   const shape = shapeRaw.map((entry) => Math.trunc(Number(entry ?? 0)));
@@ -357,6 +359,13 @@ function parseNdarrayFromPickleparser(value: unknown, label: string): SmplTensor
     shape,
     values: decodeNdarrayValues(rawBytes, descriptor, shape, fortranOrder),
   };
+}
+
+export function parsePickleNdarrayFloat64(
+  value: unknown,
+  label: string,
+): ParsedPickleNdarrayFloat64 {
+  return parseNdarrayFromPickleparser(value, label);
 }
 
 function toFloatTensor(value: unknown, label: string): SmplTensorFloat64 {
@@ -446,7 +455,7 @@ export async function parseSmplWebuserPkl(file: File): Promise<ParsedSmplWebuser
   const buffer = await file.arrayBuffer();
   let parsed: unknown;
   try {
-    parsed = parseWithPickleparser(buffer);
+    parsed = parsePythonPickleBuffer(buffer);
   } catch (error) {
     throw new Error(`Failed to parse SMPL PKL with pickleparser: ${toErrorMessage(error)}.`);
   }

@@ -49,6 +49,174 @@
       }
     },
     {
+      "id": "go2-model",
+      "label": "Unitree Go2",
+      "description": "Go2 URDF preset model for MimicKit playback.",
+      "model": {
+        "files": [
+          {
+            "path": "presets/unitree/go2_description/urdf/go2_description.urdf",
+            "mapAs": "go2_description/urdf/go2_description.urdf"
+          },
+          {
+            "path": "presets/unitree/go2_description/dae/base.dae",
+            "mapAs": "go2_description/dae/base.dae"
+          },
+          {
+            "path": "presets/unitree/go2_description/dae/hip.dae",
+            "mapAs": "go2_description/dae/hip.dae"
+          },
+          {
+            "path": "presets/unitree/go2_description/dae/thigh.dae",
+            "mapAs": "go2_description/dae/thigh.dae"
+          },
+          {
+            "path": "presets/unitree/go2_description/dae/thigh_mirror.dae",
+            "mapAs": "go2_description/dae/thigh_mirror.dae"
+          },
+          {
+            "path": "presets/unitree/go2_description/dae/calf.dae",
+            "mapAs": "go2_description/dae/calf.dae"
+          },
+          {
+            "path": "presets/unitree/go2_description/dae/calf_mirror.dae",
+            "mapAs": "go2_description/dae/calf_mirror.dae"
+          },
+          {
+            "path": "presets/unitree/go2_description/dae/foot.dae",
+            "mapAs": "go2_description/dae/foot.dae"
+          }
+        ],
+        "selectedUrdfPath": "go2_description/urdf/go2_description.urdf"
+      }
+    },
+    {
+      "id": "g1-mimickit-cartwheel",
+      "label": "MimicKit G1 cartwheel",
+      "description": "MimicKit G1 cartwheel preset motion.",
+      "motion": {
+        "kind": "mimickit",
+        "path": "presets/MimicKit/g1/g1_cartwheel.pkl"
+      }
+    },
+    {
+      "id": "g1-mimickit-double-kong",
+      "label": "MimicKit G1 double kong",
+      "description": "MimicKit G1 double kong preset motion.",
+      "motion": {
+        "kind": "mimickit",
+        "path": "presets/MimicKit/g1/g1_double_kong.pkl"
+      }
+    },
+    {
+      "id": "g1-mimickit-kick-combo",
+      "label": "MimicKit G1 kick combo",
+      "description": "MimicKit G1 kick combo preset motion.",
+      "motion": {
+        "kind": "mimickit",
+        "path": "presets/MimicKit/g1/g1_kick_combo.pkl"
+      }
+    },
+    {
+      "id": "g1-mimickit-run",
+      "label": "MimicKit G1 run",
+      "description": "MimicKit G1 run preset motion.",
+      "motion": {
+        "kind": "mimickit",
+        "path": "presets/MimicKit/g1/g1_run.pkl"
+      }
+    },
+    {
+      "id": "g1-mimickit-speed-vault",
+      "label": "MimicKit G1 speed vault",
+      "description": "MimicKit G1 speed vault preset motion.",
+      "motion": {
+        "kind": "mimickit",
+        "path": "presets/MimicKit/g1/g1_speed_vault.pkl"
+      }
+    },
+    {
+      "id": "g1-mimickit-spinkick",
+      "label": "MimicKit G1 spinkick",
+      "description": "MimicKit G1 spinkick preset motion.",
+      "motion": {
+        "kind": "mimickit",
+        "path": "presets/MimicKit/g1/g1_spinkick.pkl"
+      }
+    },
+    {
+      "id": "g1-mimickit-walk",
+      "label": "MimicKit G1 walk",
+      "description": "MimicKit G1 walk preset motion.",
+      "motion": {
+        "kind": "mimickit",
+        "path": "presets/MimicKit/g1/g1_walk.pkl"
+      }
+    },
+    {
+      "id": "go2-mimickit-pace",
+      "label": "MimicKit Go2 pace",
+      "description": "MimicKit Go2 pace preset motion.",
+      "motion": {
+        "kind": "mimickit",
+        "path": "presets/MimicKit/go2/go2_pace.pkl"
+      }
+    },
+    {
+      "id": "go2-mimickit-run",
+      "label": "MimicKit Go2 run",
+      "description": "MimicKit Go2 run preset motion.",
+      "motion": {
+        "kind": "mimickit",
+        "path": "presets/MimicKit/go2/go2_run.pkl"
+      }
+    },
+    {
+      "id": "go2-mimickit-trot",
+      "label": "MimicKit Go2 trot",
+      "description": "MimicKit Go2 trot preset motion.",
+      "motion": {
+        "kind": "mimickit",
+        "path": "presets/MimicKit/go2/go2_trot.pkl"
+      }
+    },
+    {
+      "id": "go2-mimickit-walk0",
+      "label": "MimicKit Go2 walk0",
+      "description": "MimicKit Go2 walk0 preset motion.",
+      "motion": {
+        "kind": "mimickit",
+        "path": "presets/MimicKit/go2/go2_walk0.pkl"
+      }
+    },
+    {
+      "id": "go2-mimickit-walk1",
+      "label": "MimicKit Go2 walk1",
+      "description": "MimicKit Go2 walk1 preset motion.",
+      "motion": {
+        "kind": "mimickit",
+        "path": "presets/MimicKit/go2/go2_walk1.pkl"
+      }
+    },
+    {
+      "id": "go2-mimickit-walk2",
+      "label": "MimicKit Go2 walk2",
+      "description": "MimicKit Go2 walk2 preset motion.",
+      "motion": {
+        "kind": "mimickit",
+        "path": "presets/MimicKit/go2/go2_walk2.pkl"
+      }
+    },
+    {
+      "id": "go2-mimickit-walk3",
+      "label": "MimicKit Go2 walk3",
+      "description": "MimicKit Go2 walk3 preset motion.",
+      "motion": {
+        "kind": "mimickit",
+        "path": "presets/MimicKit/go2/go2_walk3.pkl"
+      }
+    },
+    {
       "id": "smplx-amass-extended3",
       "label": "SMPL-X Male + ACCAD Male2MartialArtsExtended_c3d",
       "description": "SMPL-X male model with AMASS Extended_3_stageii motion preview.",

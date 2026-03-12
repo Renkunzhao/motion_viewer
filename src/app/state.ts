@@ -10,7 +10,8 @@ const STATE_COPY: Record<ViewerState, StateCopy> = {
   idle: {
     chip: 'Idle',
     title: 'Wait for load',
-    dropHint: 'Use preset dropdown to play a demo.\n Drag and drop to load models (.bvh, .urdf, .npz/.pkl (SMPL) ).',
+    dropHint:
+      'Use the Models / Motions / Objects dropdowns to browse presets.\nDrag and drop to load models (.bvh, .urdf, .npz/.pkl (SMPL)) or MimicKit motion (.pkl).',
   },
   drag_over: {
     chip: 'Drop',
@@ -26,7 +27,7 @@ const STATE_COPY: Record<ViewerState, StateCopy> = {
     chip: 'Model Ready',
     title: 'Model Loaded',
     dropHint:
-      'Drag and drop to load motion (.csv, .npz, .pkl) or objects (.obj).',
+      'Choose an optional object, then load a compatible motion from the dropdown or by drag and drop (.csv, MimicKit .pkl, .npz, .bvh).',
   },
   playing: {
     chip: 'Playing',

@@ -42,35 +42,37 @@
       <aside id="dataset-panel" class="dataset-panel" aria-label="Datasets and models">
         <p class="dataset-panel__title">Datasets</p>
         <div class="preset-picker">
-          <label for="preset-select" class="preset-picker__label">preset motions</label>
-          <div class="preset-picker__row">
-            <select id="preset-select" class="preset-picker__select">
-              <option value="">Loading presets...</option>
-            </select>
-            <button id="preset-load-btn" type="button" class="ghost">Load Preset</button>
-          </div>
-          <label for="urdf-select" class="preset-picker__label">URDF Models</label>
+          <label for="urdf-select" class="preset-picker__label">Models</label>
           <div class="preset-picker__row preset-picker__row--single">
             <select id="urdf-select" class="preset-picker__select">
-              <option value="">No URDF model loaded</option>
+              <option value="">Loading models...</option>
             </select>
           </div>
-          <label for="smpl-model-select" class="preset-picker__label">SMPL Models</label>
+          <label for="preset-select" class="preset-picker__label">Motions</label>
           <div class="preset-picker__row preset-picker__row--single">
-            <select id="smpl-model-select" class="preset-picker__select">
-              <option value="">No SMPL model loaded</option>
+            <select id="preset-select" class="preset-picker__select">
+              <option value="">Select model first</option>
             </select>
           </div>
-          <label for="obj-select" class="preset-picker__label">OBJECTS</label>
+          <label for="obj-select" class="preset-picker__label">Objects</label>
           <div class="preset-picker__row preset-picker__row--single">
             <select id="obj-select" class="preset-picker__select">
-              <option value="">Loading objects...</option>
+              <option value="">Select model first</option>
             </select>
           </div>
+          <button id="preset-load-btn" type="button" class="ghost" hidden>Load Preset</button>
+          <select
+            id="smpl-model-select"
+            class="preset-picker__select"
+            hidden
+            aria-hidden="true"
+            tabindex="-1"
+          >
+            <option value="">No SMPL model loaded</option>
+          </select>
           <p class="preset-picker__notice">
-            These motions are provided for website feature demonstration only. No model or motion downloads are offered.
-            Please obtain assets from the original source and follow its license terms. For infringement concerns, contact
-            <a href="mailto:rkzdtc@gmail.com">rkzdtc@gmail.com</a>.
+            Preset previews bundle demo assets under their upstream licenses. Check the original source and included license
+            files before reuse. For infringement concerns, contact <a href="mailto:rkzdtc@gmail.com">rkzdtc@gmail.com</a>.
           </p>
         </div>
       </aside>
@@ -114,7 +116,7 @@
             </button>
           </div>
           <p id="status-detail" class="status-panel__detail">
-            Drag and drop to load URDF / CSV / BVH / SMPL model (.npz/.pkl) + motion (.npz).
+            Drag and drop to load URDF / CSV / MimicKit PKL / BVH / SMPL model (.npz/.pkl) + motion (.npz).
           </p>
           <ul id="status-warnings" class="status-panel__warnings"></ul>
         </section>

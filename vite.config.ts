@@ -8,8 +8,12 @@ export default defineConfig({
     port: 5173,
     watch: {
       ignored: [
-        // Reference repos and embedded Python envs are large and not part of Vite HMR sources.
+        // Large asset trees are loaded at runtime or via drag-and-drop, not via Vite HMR.
         '**/ref/**',
+        '**/motions/**',
+        '**/models/**',
+        '**/.cache/**',
+        '**/*.lock',
         '**/.venv/**',
         '**/site-packages/**',
       ],
